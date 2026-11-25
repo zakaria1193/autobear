@@ -1,6 +1,6 @@
 # autobear
 
-Autobear creates a clangd compilation database from a build log. During `init`, a strong LLM model reads source and log excerpts to identify targets, configuration, and prerequisites. Autobear then refreshes the database with Bear. A smaller LLM model handles only the compiler commands Bear leaves unresolved. The build can run on another machine or in CI.
+Autobear creates a clangd compilation database from a build log and a source repositoty. During `init`, a strong LLM model reads source and log excerpts to identify targets, configuration, and prerequisites. Autobear then refreshes the database with Bear. A smaller LLM model handles only the compiler commands Bear leaves unresolved. The build can run on another machine or in CI.
 
 ## Install
 
