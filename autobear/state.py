@@ -231,11 +231,19 @@ class Plan:
         return plan
 
 
-def logged_configure_args(path):
-    """Return the arguments of an unambiguous configure invocation in the log."""
+SYSTEM_TYPE = re.compile(r"^\s*checking (build|host|target) system type\.\.\. (?:\(cached\) )?([\w.+-]+)\s*$")
+
+
+def logged_configuration(path):
+    """Return configure arguments when unambiguous and the first reported system types."""
     commands = set()
+    systems = {}
     with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
+            if match := SYSTEM_TYPE.fullmatch(line):
+                systems.setdefault(*match.groups())
+            if len(commands) > 1:
+                continue
             if "Run: cd " in line:
                 line = line.split("Run: cd ", 1)[1].partition("; ")[2]
             if not re.match(r"^\s*(?:(?:\S*/)?(?:bash|sh)\s+)?(?:\S*/)?configure(?:\s|$)", line):
@@ -243,14 +251,14 @@ def logged_configure_args(path):
             try:
                 words = shlex.split(line)
             except ValueError:
-                return None
+                commands.update({None, ()})
+                continue
             script = 0 if Path(words[0]).name == "configure" else 1
             if any(word in {";", "&&", "||", "|", "&"} for word in words[script + 1:]):
-                return None
+                commands.update({None, ()})
+                continue
             commands.add(tuple(words[script + 1:]))
-            if len(commands) > 1:
-                return None
-    return next(iter(commands), None)
+    return (next(iter(commands)) if len(commands) == 1 else None), systems
 
 
 def analysis_log(path):
@@ -285,7 +293,7 @@ def analysis_log(path):
                 r"; (?:\S+/)?make\s|(?:^|/)configure(?:\s|$)", line
             ):
                 build_commands.append(f"{number}: {line[:1800]}")
-            if len(system_types) < 9 and re.search(r"checking (?:build|host|target) system type\.\.\.", line):
+            if len(system_types) < 9 and SYSTEM_TYPE.fullmatch(line):
                 system_types.append(snippet)
             if len(generated) < 32 and generator.fullmatch(line):
                 generated.append(snippet)
