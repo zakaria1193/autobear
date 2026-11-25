@@ -18,7 +18,7 @@ from .clangd import configure_clangd, verify
 from .progress import report_wait
 from .selection import fzf_choice
 from .state import (
-    DATABASE_NAME, Error, Plan, activate_profile, active_profile, logged_configure_args, profile_names,
+    DATABASE_NAME, Error, Plan, activate_profile, active_profile, logged_configuration, profile_names,
     profile_state, project_context, targets, write_text,
 )
 from .variants import saved_variants, update_variants
@@ -69,7 +69,7 @@ def log_path(args):
     return path
 
 
-def import_match(plan, source, requested_targets, log, configure_args):
+def import_match(plan, source, requested_targets, log, configuration):
     if plan is None or not plan.analyzed or not plan.database.is_file():
         return False, None
     if plan.source != source or (requested_targets and plan.targets != requested_targets):
@@ -78,8 +78,14 @@ def import_match(plan, source, requested_targets, log, configure_args):
         return False, None
     if filecmp.cmp(plan.log, log, shallow=False):
         return True, True
-    previous_args = logged_configure_args(plan.log) if configure_args is not None else None
-    return False, None if previous_args is None else previous_args == configure_args
+    incoming_args, incoming_systems = configuration
+    previous_args, previous_systems = logged_configuration(plan.log)
+    shared = incoming_systems.keys() & previous_systems.keys()
+    if any(incoming_systems[key] != previous_systems[key] for key in shared):
+        return False, False
+    if incoming_args is not None and previous_args is not None and (incoming_args or previous_args or shared):
+        return False, incoming_args == previous_args
+    return False, None
 
 
 def find_import(plans, matches, active):
@@ -124,8 +130,8 @@ def init(args, build, get_architect, get_worker):
     active = variants.get(selected, selected)
     names = [name for name in profile_names(build) if args.profile is None or name == args.profile]
     plans = {name: Plan.load(build, name) for name in names}
-    configure_args = logged_configure_args(log) if plans else None
-    matches = {name: import_match(plan, source, args.target, log, configure_args) for name, plan in plans.items()}
+    configuration = logged_configuration(log) if plans else (None, {})
+    matches = {name: import_match(plan, source, args.target, log, configuration) for name, plan in plans.items()}
     existing = plans.get(args.profile) if args.profile is not None else find_import(plans, matches, active)
     name = args.profile or (existing.profile if existing else None)
     same_log, same_configuration = matches.get(name, (False, None))
