@@ -6,11 +6,11 @@ Autobear instead starts from a build log you already have. A strong LLM reads it
 
 On top of what Bear captures on its own, autobear:
 
-- Works out the targets, configure options, and prerequisite steps from a build log and the source tree, so you don't need to already know the right invocation.
-- Repairs commands Bear's interception never sees: quiet or abbreviated output, libtool-wrapped compiles, shell conditionals in make recipes.
-- Keeps separate build profiles, such as native and cross, each with its own plan, log, and database, and lets you switch between them.
-- Builds multiple clangd views when one source compiles into several objects under different flags.
-- Reimports later logs to refresh or patch a database, and verifies recorded paths against what clangd needs.
+- Works out what to build from a log and the source tree, e.g. `--target=arm-elf` and the `all-ld` target.
+- Repairs commands Bear misses, e.g. abbreviated `CC foo.o` lines and libtool-wrapped compiles.
+- Keeps separate profiles, e.g. a native build and an ARM cross build of the same tree.
+- Adds clangd views, e.g. one source compiled into both `ld.bfd` and `ld.gold`.
+- Reimports later logs to refresh or patch, and verifies the recorded paths.
 
 ## Install
 
