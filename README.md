@@ -1,6 +1,6 @@
 # autobear
 
-GNU autotools/autoconf projects have no `compile_commands.json`, and tools like Bear or `intercept-build` only wrap a build you must already know how to run, still missing commands a quiet log abbreviates, libtool wraps, or shell conditionals hide.
+GNU autotools/autoconf projects such as binutils, GCC, GDB, and glibc have no `compile_commands.json`, and tools like Bear or `intercept-build` only wrap a build you must already know how to run, still missing commands a quiet log abbreviates, libtool wraps, or shell conditionals hide.
 
 Autobear instead starts from a build log you already have. A strong LLM reads it with the source tree to work out the targets, configuration, and prerequisites, drives Bear through that reconstructed build to capture the real compiler commands, and a smaller LLM repairs whatever Bear's interception missed.
 
