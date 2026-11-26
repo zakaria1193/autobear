@@ -1,10 +1,10 @@
 # autobear
 
-GNU configure/make projects such as binutils, GCC, GDB, and glibc have no `compile_commands.json`. Tools that only wrap a build you run yourself, such as Bear or `intercept-build`, need you to already know the right targets, directories, and configure flags. They also lose commands that a quiet log abbreviates, that libtool wraps, or that hide behind shell conditionals.
+GNU configure/make projects such as binutils, GCC, GDB, and glibc have no `compile_commands.json`, and tools like Bear or `intercept-build` only wrap a build you must already know how to run, still missing commands a quiet log abbreviates, libtool wraps, or shell conditionals hide.
 
-Autobear starts from a build log you already have, from your own machine, another machine, or CI, together with the source tree. A strong LLM reads that evidence to work out the targets, configuration, and prerequisites. Autobear then drives Bear through the reconstructed build to capture the real compiler commands. A second, smaller LLM repairs only the commands Bear's interception could not resolve.
+Autobear instead starts from a build log you already have. A strong LLM reads it with the source tree to work out the targets, configuration, and prerequisites, drives Bear through that reconstructed build to capture the real compiler commands, and a smaller LLM repairs whatever Bear's interception missed.
 
-It covers importing a build as a named profile, switching between profiles for different configurations of the same source tree such as native and cross builds, multiple clangd views when one source compiles into several objects with different flags, reimporting later logs to refresh or patch a database, and verifying recorded paths against what clangd needs.
+It covers build profiles for different configurations of one source tree, clangd views for sources that compile into several objects, reimporting logs to refresh or patch a database, and verifying recorded paths.
 
 ## Install
 
