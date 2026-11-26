@@ -1,16 +1,17 @@
 # autobear
 
-GNU autotools/autoconf projects such as binutils, GCC, GDB, and glibc have no `compile_commands.json`, and tools like Bear or `intercept-build` only wrap a build you must already know how to run, still missing commands a quiet log abbreviates, libtool wraps, or shell conditionals hide.
+Autobear creates a clangd `compile_commands.json` from the build log of a GNU autotools/autoconf project such as binutils, GCC, GDB, or glibc. Autobear never reruns the build, so the build can run on CI, on another machine, or in a container.
 
-Autobear instead starts from a build log you already have. A strong LLM reads it with the source tree to work out the targets, configuration, and prerequisites, drives Bear through that reconstructed build to capture the real compiler commands, and a smaller LLM repairs whatever Bear's interception missed.
+Autobear passes the log to Bear's shell parser. A strong LLM reads the log and source tree once to understand the build. A smaller LLM then repairs the commands that Bear cannot parse.
 
-On top of what Bear captures on its own, autobear:
-
-- Works out what to build from a log and the source tree, e.g. `--target=arm-elf` and the `all-ld` target.
-- Repairs commands Bear misses, e.g. abbreviated `CC foo.o` lines and libtool-wrapped compiles.
-- Keeps separate profiles, e.g. a native build and an ARM cross build of the same tree.
-- Adds clangd views, e.g. one source compiled into both `ld.bfd` and `ld.gold`.
-- Reimports later logs to refresh or patch, and verifies the recorded paths.
+| | Bear alone | autobear |
+|---|---|---|
+| The tree is already built | `bear -- make` records nothing | Reads the existing log |
+| The build ran on CI | Rerun it locally under Bear | Import the log, and remap paths with `--log-directory` |
+| A quiet log prints `CC foo.o` | No entry | Infers the command from the Makefiles |
+| A compile is wrapped by libtool or automake | Often unresolved | Unwraps it or repairs it |
+| You have native and cross builds of one tree | One database | Separate profiles, selected with `autobear switch` |
+| `ld.bfd` and `ld.gold` compile the same source | clangd uses the first entry | One clangd view for each target |
 
 ## Install
 
