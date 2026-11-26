@@ -5,7 +5,8 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -20,10 +21,49 @@ RECOMMENDATION = ("Choose the strongest model you have, such as Claude Opus. "
                   "Autocompdb calls it only when you import or repair a log.")
 
 
+def token_sum(*counts):
+    if all(type(count) is int and count >= 0 for count in counts):
+        return sum(counts)
+    return None
+
+
+def json_object(line):
+    try:
+        value = json.loads(line, parse_float=Decimal)
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+@dataclass
+class Usage:
+    tokens: int | None = None
+    usd: Decimal | None = None
+
+    def read(self, provider, message):
+        counts = message.get("usage")
+        if not isinstance(counts, dict):
+            counts = {}
+        if provider == "claude-cli":
+            self.tokens = token_sum(counts.get("input_tokens"), counts.get("output_tokens"),
+                                    counts.get("cache_creation_input_tokens", 0),
+                                    counts.get("cache_read_input_tokens", 0))
+            cost = message.get("total_cost_usd")
+        elif provider == "codex-cli":
+            self.tokens = token_sum(counts.get("input_tokens"), counts.get("output_tokens"))
+            cost = None
+        else:
+            self.tokens = token_sum(counts.get("total_tokens"))
+            cost = counts.get("cost") if provider == "openrouter" else None
+        if type(cost) in (int, Decimal) and Decimal(cost).is_finite() and cost >= 0:
+            self.usd = Decimal(cost)
+
+
 @dataclass(frozen=True)
 class Provider:
     name: str
     model: str = ""
+    usage: list[Usage] = field(default_factory=list, compare=False, repr=False, kw_only=True)
 
     def unavailable(self):
         if self.name == "openrouter":
@@ -39,8 +79,11 @@ class Provider:
             raise Error(problem)
         template = files("autocompdb").joinpath("prompts", f"{task}.txt").read_text()
         prompt = f"{template}\n\nInput data (JSON)\n{json.dumps(context)}"
+        usage = Usage()
+        self.usage.append(usage)
         try:
-            output = self.openrouter(prompt) if self.name == "openrouter" else self.run_cli(prompt)
+            output = (self.openrouter(prompt, usage) if self.name == "openrouter"
+                      else self.run_cli(prompt, usage))
             value = json.loads(output)
             if not isinstance(value, dict):
                 raise ValueError("Expected a JSON object.")
@@ -50,7 +93,7 @@ class Provider:
         except (OSError, URLError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError) as exc:
             raise Error(f"{self.name} did not return a usable JSON response ({type(exc).__name__}).") from exc
 
-    def run_cli(self, prompt):
+    def run_cli(self, prompt, usage):
         model = ["--model", self.model] if self.model else []
         with tempfile.TemporaryDirectory(prefix="autocompdb-provider-") as temp:
             output = Path(temp) / "response.json"
@@ -60,7 +103,8 @@ class Provider:
             elif self.name == "codex-cli":
                 command = [
                     "codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
-                    "--ephemeral", "--ignore-user-config", "--output-last-message", str(output), *model, "-",
+                    "--ephemeral", "--ignore-user-config", "--json", "--output-last-message",
+                    str(output), *model, "-",
                 ]
                 stdin = prompt
             else:
@@ -68,18 +112,28 @@ class Provider:
                 stdin = ""
             result = subprocess.run(command, input=stdin, cwd=temp, text=True,
                                     capture_output=True, timeout=300)
+            if self.name == "codex-cli":
+                for line in reversed(result.stdout.splitlines()):
+                    event = json_object(line)
+                    if event.get("type") == "turn.completed":
+                        usage.read(self.name, event)
+                        break
+            else:
+                message = (json_object(result.stdout) if result.returncode
+                           else json.loads(result.stdout, parse_float=Decimal))
+                if isinstance(message, dict):
+                    usage.read(self.name, message)
             if result.returncode:
                 raise Error(f"{self.name} exited with status {result.returncode}.")
             if self.name == "codex-cli":
                 return output.read_text()
-            message = json.loads(result.stdout)
             if self.name == "claude-cli" and not message["is_error"]:
                 return message["result"]
             if self.name == "agy-cli" and message["status"] == "SUCCESS":
                 return message["response"]
             raise Error(f"{self.name} reported a failed request.")
 
-    def openrouter(self, prompt):
+    def openrouter(self, prompt, usage):
         body = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -94,7 +148,9 @@ class Provider:
             },
         )
         with urlopen(request, timeout=300) as response:
-            value = json.load(response)
+            value = json.load(response, parse_float=Decimal)
+        if isinstance(value, dict):
+            usage.read(self.name, value)
         return value["choices"][0]["message"]["content"]
 
 

@@ -71,23 +71,43 @@ class ProgressTest(unittest.TestCase):
 class ProvidersTest(unittest.TestCase):
     def test_cli_response_fixtures(self):
         envelopes = {
-            "claude-cli": lambda value: {"is_error": False, "result": value},
-            "agy-cli": lambda value: {"status": "SUCCESS", "response": value},
-            "codex-cli": lambda value: value,
+            "claude-cli": lambda value: {
+                "is_error": False, "result": value, "total_cost_usd": 0.00012,
+                "usage": {"input_tokens": 10, "output_tokens": 2,
+                          "cache_creation_input_tokens": 5, "cache_read_input_tokens": 20},
+            },
+            "agy-cli": lambda value: {
+                "status": "SUCCESS", "response": value, "usage": {"total_tokens": 30},
+            },
+            "codex-cli": lambda value: {
+                "type": "turn.completed",
+                "usage": {"input_tokens": 20, "cached_input_tokens": 10, "output_tokens": 2},
+            },
         }
+        token_totals = {"claude-cli": 37, "agy-cli": 30, "codex-cli": 22}
         for name, envelope in envelopes.items():
             for mode in ("valid", "malformed", "failed"):
                 with self.subTest(name=name, mode=mode):
                     def run(command, **options):
                         value = '{"targets":["all"]}' if mode == "valid" else "[malformed"
+                        stdout = json.dumps(envelope(value))
+                        if name == "codex-cli":
+                            self.assertIn("--json", command)
+                            stdout = '{"type":"turn.started"}\n' + stdout + "\n"
                         if name == "codex-cli" and mode != "failed":
                             output = command[command.index("--output-last-message") + 1]
                             Path(output).write_text(value)
-                        return subprocess.CompletedProcess(command, int(mode == "failed"),
-                                                           json.dumps(envelope(value)), "")
+                        return subprocess.CompletedProcess(command, int(mode == "failed"), stdout, "")
                     with patch("autocompdb.providers.shutil.which", return_value="/bin/provider"), \
                             patch("autocompdb.providers.subprocess.run", side_effect=run):
-                        self.check_response(Provider(name, "example"), mode)
+                        provider = Provider(name, "example")
+                        self.check_response(provider, mode)
+                    self.assertEqual(provider.usage[0].tokens, token_totals[name])
+                    cost = provider.usage[0].usd
+                    if name == "claude-cli":
+                        self.assertEqual(str(cost), "0.00012")
+                    else:
+                        self.assertIsNone(cost)
 
     def test_openrouter_response_fixtures(self):
         from urllib.error import HTTPError
@@ -763,6 +783,28 @@ class RefreshTest(unittest.TestCase):
         self.assertEqual({entry_location(entry)[1] for entry in entries}, {
             Path("/remote/job/base.c"), Path("/remote/job/generated.c"),
         })
+
+    def test_init_reports_usage_from_analysis_and_failed_repair(self):
+        self.log.write_text(
+            "gcc -c base.c -o base.o\n"
+            "if true; then gcc -c generated.c -o generated.o; fi\n"
+        )
+        responses = [
+            {"choices": [{"message": {"content": json.dumps(plan_response())}}],
+             "usage": {"total_tokens": 1000, "cost": 0.0001}},
+            {"choices": [{"message": {"content": "[]"}}],
+             "usage": {"total_tokens": 200, "cost": 0.00002}},
+        ]
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "fixture"}), \
+                patch("autocompdb.providers.urlopen",
+                      side_effect=[io.StringIO(json.dumps(value)) for value in responses]):
+            status, error = self.invoke(
+                ["init", str(self.log), str(self.source), "--log-directory", "/remote/job"],
+                lambda: Provider("openrouter", "example"),
+            )
+        self.assertEqual(status, 1)
+        self.assertIn("Repair batch failed.", error)
+        self.assertEqual(error.splitlines()[-1], "LLM usage: 1,200 tokens, $0.00012")
 
     def test_refresh_repairs_an_imported_log_without_new_analysis(self):
         prerequisite = {"directory": ".", "targets": ["generate"]}

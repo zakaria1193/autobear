@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
+from decimal import Decimal
 from itertools import count
 from pathlib import Path
 
@@ -287,6 +289,14 @@ def switch_profile(args, build):
 def main(argv=None, get_llm=None):
     args = arguments(argv)
     get_llm = get_llm or (lambda: providers.settings(query=args.action == "init"))
+    usage = []
+
+    def tracked_llm():
+        llm = get_llm()
+        if isinstance(llm, providers.Provider):
+            return replace(llm, usage=usage)
+        return llm
+
     build = args.build.resolve()
     try:
         state = build / ".autobear"
@@ -294,9 +304,9 @@ def main(argv=None, get_llm=None):
             if args.action == "switch":
                 return switch_profile(args, build)
             if args.action == "init":
-                return init(args, build, get_llm)
+                return init(args, build, tracked_llm)
             if args.action == "refresh":
-                return refresh(args, build, get_llm)
+                return refresh(args, build, tracked_llm)
             selected = active_profile(build)
             owner = saved_variants(build).get(selected)
             plan = Plan.load(build, owner)
@@ -306,11 +316,11 @@ def main(argv=None, get_llm=None):
                 if plan.log_directory is not None:
                     raise Error("This directory uses imported logs. Run autocompdb refresh to update its database.")
                 capture(plan, args.jobs)
-                unresolved = refresh_database(plan, get_llm, allow_empty=True)
+                unresolved = refresh_database(plan, tracked_llm, allow_empty=True)
                 conflict = configure_clangd(plan)
                 return int(unresolved or conflict)
             if args.action == "patch":
-                unresolved = patch(plan, get_llm)
+                unresolved = patch(plan, tracked_llm)
                 update_variants(plan, selected)
                 return int(unresolved)
             database = profile_state(build, variant) / DATABASE_NAME if variant else plan.database
@@ -318,3 +328,20 @@ def main(argv=None, get_llm=None):
     except (Error, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"autocompdb: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if usage:
+            sys.stdout.flush()
+            print_usage(usage)
+
+
+def print_usage(usage):
+    tokens = [item.tokens for item in usage if item.tokens is not None]
+    costs = [item.usd for item in usage if item.usd is not None]
+    summary = f"{sum(tokens):,} tokens" if tokens else "Token count unavailable"
+    if tokens and len(tokens) < len(usage):
+        summary += " (partial)"
+    if costs:
+        summary += f", ${sum(costs, Decimal('0.00')):f}"
+        if len(costs) < len(usage):
+            summary += " (partial)"
+    print(f"LLM usage: {summary}", file=sys.stderr)
