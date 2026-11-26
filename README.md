@@ -1,30 +1,12 @@
 # autocompdb
 
-Autocompdb creates a clangd `compile_commands.json` from the build log of a GNU autotools/autoconf project such as binutils, GCC, GDB, or glibc. Autocompdb never reruns the build, so the build can run on CI, on another machine, or in a container.
+Autocompdb creates a clangd `compile_commands.json` from the build log of a GNU autotools/autoconf project such as binutils, GCC, GDB, or glibc. Import a log from CI, another machine, or a container without rerunning the build.
 
-Autocompdb passes the log to Bear's shell parser. An LLM reads the log and source tree once to understand the build, and then repairs the commands that Bear cannot parse.
-
-| | Bear alone | autocompdb |
-|---|---|---|
-| The tree is already built | `bear -- make` records nothing | Reads the existing log |
-| The build ran on CI | Rerun it locally under Bear | Import the log, and remap paths with `--log-directory` |
-| A quiet log prints `CC foo.o` | No entry | Infers the command from the Makefiles |
-| A compile is wrapped by libtool or automake | Often unresolved | Unwraps it or repairs it |
-| You have native and cross builds of one tree | One database | Separate profiles, selected with `autocompdb switch` |
-| `ld.bfd` and `ld.gold` compile the same source | clangd uses the first entry | One clangd view for each target |
+Autocompdb reads compiler commands directly from the log. For quiet logs, it uses saved analysis of the log and source tree to recover missing arguments. Build profiles keep native and cross builds separate. Clangd can use a separate view for each target when targets compile the same source with different flags.
 
 ## Install
 
-Install Python 3.11 or later and [Bear 4.2.4](https://github.com/rizsotto/Bear/tree/4.2.4). Put Bear on `PATH`.
-
-If your package manager provides an older Bear, run this installer from the repository. It supports Linux x86-64 and AArch64 with glibc 2.39 or later. It asks before installing Bear and its helpers under `~/.local`.
-
-```sh
-./install-deps.sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then install autocompdb from the repository.
+Install Python 3.11 or later. Then install autocompdb from the repository.
 
 ```sh
 python3 -m venv .venv
@@ -50,7 +32,7 @@ model = "opus"
 
 The available providers are `claude-cli`, `codex-cli`, `agy-cli`, and `openrouter`. Authenticate each CLI before use. The Antigravity CLI needs support for `--print`, `--output-format json`, and `--sandbox`.
 
-For OpenRouter, set `model` to a model that supports JSON mode. Export `OPENROUTER_API_KEY` in the environment. If the LLM is unavailable, autocompdb preserves the database entries that Bear found and reports the unresolved lines.
+For OpenRouter, set `model` to a model that supports JSON mode. Export `OPENROUTER_API_KEY` in the environment. If the LLM is unavailable, autocompdb preserves the entries it recovered from the log and reports the unresolved lines.
 
 To override the file, set `AUTOCOMPDB_PROVIDER` or `AUTOCOMPDB_MODEL`.
 
@@ -83,8 +65,6 @@ Each build profile keeps its own plan, log, and database. If targets compile the
 
 A verbose log shows compiler command lines and working directories. For GNU make, `LC_ALL=C make --print-directory --output-sync=recurse V=1` produces this format. For a quiet log, `init` uses the source tree to help recover missing commands before it looks for target variants.
 
-Autocompdb uses Bear to read the log and sends unresolved commands to the LLM.
-
 If `refresh` cannot recover commands from a quiet log, rerun `init` with the matching source tree and the same profile. The LLM reads the build rules and records compiler flags, source mappings, and generated files. Later repairs use those annotations for steps without full commands. Autocompdb reports inferred entries and records them in the profile's `repairs.json`. A full command from a later log replaces the inferred command for that output.
 
 Autocompdb writes each command with the build machine's paths. Clangd needs the sources, headers, and generated files at those paths to use the database.
@@ -97,7 +77,7 @@ Run `autocompdb patch` to retry unresolved commands from the saved log. Run `aut
 
 If your editor cannot find the database, pass `--compile-commands-dir=/path/to/database-directory` to clangd.
 
-The `autocompdb build` command supports local build plans created by earlier versions.
+The `autocompdb build` command runs GNU make with `V=1` for saved local build plans. It reads the resulting log, so make recipes must print their compiler commands or recognizable status lines.
 
 ## Publish a release to PyPI
 
@@ -114,9 +94,9 @@ The script finds the highest `vMAJOR.MINOR.PATCH` tag across the checkout and th
 
 The tag starts the GitHub Actions workflow. The workflow uses the tag version to build the wheel and source distribution, checks them, and publishes them to PyPI. After publication, install the package with `python -m pip install autocompdb`.
 
-## Optional Bear test
+## Test a log import
 
-After installing autocompdb, test Bear with a single compiler command.
+Import a log with one compiler command.
 
 ```sh
 scratch=$(mktemp -d)
@@ -125,7 +105,7 @@ autocompdb refresh "$scratch/build.log" --log-directory /remote/build --build "$
 cat "$scratch/compile_commands.json"
 ```
 
-Expect one entry for `/remote/src/hello.c`. This test uses neither model.
+Expect one entry for `/remote/src/hello.c`. This test needs no LLM.
 
 ## Run tests
 
@@ -133,7 +113,7 @@ Expect one entry for `/remote/src/hello.c`. This test uses neither model.
 python -m unittest discover -s tests -v
 ```
 
-The provider tests use recorded responses. The build tests use real Bear, GCC, GNU make, and clangd when those tools are available.
+The provider tests use recorded responses. The build tests use GCC, GNU make, and clangd when those tools are available.
 
 Set `AUTOCOMPDB_BINUTILS_SRC` to a disposable x86-64 binutils source tree to enable the native acceptance test. The test writes a `.clangd` file in that source tree.
 

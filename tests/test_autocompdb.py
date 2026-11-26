@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 
-from autocompdb.capture import BEAR_CONFIG, entry_args, entry_location, read_database
+from autocompdb.capture import entry_args, entry_location, read_database
 from autocompdb.clangd import configure_clangd
 from autocompdb.cli import main
 from autocompdb.progress import report_wait
@@ -27,7 +27,6 @@ def plan_response(**updates):
 def save_local_plan(source, build, response):
     plan = Plan.validate(source, build, response)
     plan.state.mkdir(parents=True, exist_ok=True)
-    (plan.state / "bear.yml").write_text(BEAR_CONFIG)
     plan.save()
 
 
@@ -310,8 +309,8 @@ class StateTest(unittest.TestCase):
             self.assertEqual(legacy.read_text(), content)
 
 
-@unittest.skipUnless(all(shutil.which(tool) for tool in ("bear", "gcc", "make", "clangd")),
-                     "Requires Bear 4.2.4, GCC, GNU make and clangd.")
+@unittest.skipUnless(all(shutil.which(tool) for tool in ("gcc", "make", "clangd")),
+                     "Requires GCC, GNU make and clangd.")
 class BuildTest(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -433,7 +432,6 @@ class BuildTest(unittest.TestCase):
         self.assertIn("use a fresh build directory", output)
         self.assertEqual(read_database(database), [])
 
-@unittest.skipUnless(shutil.which("bear"), "Requires Bear 4.2.4.")
 class RefreshTest(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -565,6 +563,52 @@ class RefreshTest(unittest.TestCase):
         original = database.read_bytes()
         self.assertEqual(self.invoke(["refresh", str(self.log)], unexpected_provider)[0], 0)
         self.assertEqual(database.read_bytes(), original)
+
+    def test_import_preserves_literal_arguments_and_skips_option_values_as_sources(self):
+        self.log.write_text(
+            "cd 'sub dir' && ccache arm-none-eabi-gcc -include prefix.c "
+            "'-DLABEL=a;b && c' -c first.c second.c && mv first.Tpo first.Po\n"
+        )
+
+        def unexpected_provider():
+            self.fail("Literal compiler commands need no model.")
+
+        status, error = self.invoke(
+            ["refresh", str(self.log), "--log-directory", "/remote/job"], unexpected_provider,
+        )
+        self.assertEqual(status, 0, error)
+        entries = read_database(self.build / "compile_commands.json")
+        self.assertEqual(len(entries), 2)
+        for name, entry in zip(("first", "second"), entries):
+            directory = Path("/remote/job/sub dir")
+            self.assertEqual(entry_location(entry), (directory, directory / f"{name}.c", directory / f"{name}.o"))
+            self.assertEqual(entry_args(entry), [
+                "arm-none-eabi-gcc", "-include", "prefix.c", "-DLABEL=a;b && c", "-c", f"{name}.c",
+            ])
+
+    def test_import_recovers_libtool_commands_and_promoted_outputs(self):
+        self.log.write_text(
+            "/bin/bash ./libtool --mode=compile gcc -c plugin.c -o plugin.lo\n"
+            "libtool: compile: gcc -fPIC -c plugin.c -o .libs/plugin.o\n"
+            "libtool: compile: gcc -c plugin.c -o plugin.o >/dev/null 2>&1\n"
+            "gcc -o doc/chw$$ -g -O2 \\\n"
+            "  doc/chew.c && \\\n"
+            "/bin/bash ../move-if-change doc/chw$$ doc/chew && touch doc/chew.stamp\n"
+        )
+
+        def unexpected_provider():
+            self.fail("The log contains the compiler arguments and permanent outputs.")
+
+        status, error = self.invoke(
+            ["refresh", str(self.log), "--log-directory", "/remote/job"], unexpected_provider,
+        )
+        self.assertEqual(status, 0, error)
+        entries = read_database(self.build / "compile_commands.json")
+        self.assertEqual({entry_location(entry)[2] for entry in entries}, {
+            Path("/remote/job/.libs/plugin.o"), Path("/remote/job/plugin.o"), Path("/remote/job/doc/chew"),
+        })
+        command = next(entry_args(entry) for entry in entries if entry["file"].endswith("/doc/chew.c"))
+        self.assertEqual(command, ["gcc", "-o", "doc/chew", "-g", "-O2", "doc/chew.c"])
 
     def test_refresh_reports_abbreviated_linker_steps_without_calling_a_model(self):
         self.log.write_text(
@@ -711,7 +755,7 @@ class RefreshTest(unittest.TestCase):
         self.assertEqual([task for task, _ in llm.calls], ["analyze", "repair"])
         for message in (
             "This can take a few minutes.", "Make targets all", "Configure options --target=arm-elf",
-            "Prerequisite in .", "Generated file patterns generated.c", "Bear produced 1 compilation commands.",
+            "Prerequisite in .", "Generated file patterns generated.c", "Parsed 1 compilation commands.",
             "Repair batch 1/1 repaired 1 log commands.", "with 2 compilation commands (2 added).",
         ):
             self.assertIn(message, self.output)

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import providers
 from .capture import (
-    BEAR_CONFIG, bear_command, capture, lock, missing_abbreviated, patch, quiet_evidence, quiet_hint,
+    capture, lock, missing_abbreviated, patch, quiet_evidence, quiet_hint,
     read_database, refresh_database, scan_log,
 )
 from .clangd import configure_clangd, verify
@@ -19,7 +19,7 @@ from .progress import report_wait
 from .selection import fzf_choice
 from .state import (
     DATABASE_NAME, Error, Plan, activate_profile, active_profile, logged_configuration, profile_names,
-    profile_state, project_context, targets, write_text,
+    profile_state, project_context, targets,
 )
 from .variants import saved_variants, update_variants
 
@@ -190,7 +190,6 @@ def init(args, build, get_llm):
     if same_log and log_directory == existing.log_directory:
         plan.quiet_builds = existing.quiet_builds | plan.quiet_builds
     state.mkdir(parents=True, exist_ok=True)
-    write_text(state / "bear.yml", BEAR_CONFIG)
     plan.save()
     activate_profile(plan)
     print(f"Selected build profile {name}. Saved {state / 'plan.json'}.", flush=True)
@@ -216,10 +215,6 @@ def refresh(args, build, get_llm):
 
 def refresh_profile(plan, path, log_directory, get_llm, selected):
     plan.log_directory = log_directory or plan.log_directory or plan.build
-    config = plan.state / "bear.yml"
-    if not config.exists():
-        write_text(config, BEAR_CONFIG)
-    bear = bear_command(plan)
     if path != plan.log.resolve():
         print(f"Saving a copy of the build log to {plan.log}.", flush=True)
         with tempfile.NamedTemporaryFile(dir=plan.state, delete=False) as stream:
@@ -233,7 +228,7 @@ def refresh_profile(plan, path, log_directory, get_llm, selected):
                 temporary.unlink(missing_ok=True)
     plan.save()
     activate_profile(plan)
-    status = refresh_database(plan, bear, get_llm)
+    status = refresh_database(plan, get_llm)
     update_variants(plan, selected)
     return status
 
@@ -310,17 +305,16 @@ def main(argv=None, get_llm=None):
             if args.action == "build":
                 if plan.log_directory is not None:
                     raise Error("This directory uses imported logs. Run autocompdb refresh to update its database.")
-                bear = capture(plan, args.jobs)
-                unresolved = patch(plan, bear, get_llm)
+                capture(plan, args.jobs)
+                unresolved = refresh_database(plan, get_llm, allow_empty=True)
                 conflict = configure_clangd(plan)
                 return int(unresolved or conflict)
-            bear = bear_command(plan)
             if args.action == "patch":
-                unresolved = patch(plan, bear, get_llm)
+                unresolved = patch(plan, get_llm)
                 update_variants(plan, selected)
                 return int(unresolved)
             database = profile_state(build, variant) / DATABASE_NAME if variant else plan.database
-            return verify(plan, bear, args.sample_size, args.query_driver, database=database)
+            return verify(plan, args.sample_size, args.query_driver, database=database)
     except (Error, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"autocompdb: {exc}", file=sys.stderr)
         return 1

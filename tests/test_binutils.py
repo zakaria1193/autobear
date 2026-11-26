@@ -15,7 +15,7 @@ BINUTILS = os.getenv("AUTOCOMPDB_BINUTILS_SRC")
 
 
 @unittest.skipUnless(BINUTILS and platform.machine() == "x86_64"
-                     and all(shutil.which(tool) for tool in ("bear", "clangd", "gcc", "make")),
+                     and all(shutil.which(tool) for tool in ("clangd", "gcc", "make")),
                      "Set AUTOCOMPDB_BINUTILS_SRC to a disposable native binutils source tree.")
 class BinutilsTest(unittest.TestCase):
     def test_capture_native_linker(self):

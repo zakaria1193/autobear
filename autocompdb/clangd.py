@@ -91,7 +91,7 @@ def expected_driver(args, directory):
     return shutil.which(driver) or driver
 
 
-def verify(plan, bear, sample_size, query_drivers, *, database=None):
+def verify(plan, sample_size, query_drivers, *, database=None):
     database = database or plan.database
     entries = read_database(database)
     by_file = {}
@@ -99,7 +99,7 @@ def verify(plan, bear, sample_size, query_drivers, *, database=None):
         by_file.setdefault(entry_location(entry)[1], entry)
     generated = generated_files(plan)
     candidates, abbreviated = scan_log(plan)
-    missing = candidates_missing(plan, bear, entries, candidates)
+    missing = candidates_missing(plan, entries, candidates)
     abbreviated_missing = report_abbreviated(plan, abbreviated, entries)
     print(f"Database contains {len(entries)} commands for {len(by_file)} files.")
     source_on_disk = set(source_files_on_disk(plan)) - generated
