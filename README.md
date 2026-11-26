@@ -1,6 +1,10 @@
 # autobear
 
-Autobear creates a clangd compilation database from a build log. During `init`, a strong LLM model reads source and log excerpts to identify targets, configuration, and prerequisites. Autobear then refreshes the database with Bear. A smaller LLM model handles only the compiler commands Bear leaves unresolved. The build can run on another machine or in CI.
+GNU configure/make projects such as binutils, GCC, GDB, and glibc have no `compile_commands.json`. Tools that only wrap a build you run yourself, such as Bear or `intercept-build`, need you to already know the right targets, directories, and configure flags. They also lose commands that a quiet log abbreviates, that libtool wraps, or that hide behind shell conditionals.
+
+Autobear starts from a build log you already have, from your own machine, another machine, or CI, together with the source tree. A strong LLM reads that evidence to work out the targets, configuration, and prerequisites. Autobear then drives Bear through the reconstructed build to capture the real compiler commands. A second, smaller LLM repairs only the commands Bear's interception could not resolve.
+
+It covers importing a build as a named profile, switching between profiles for different configurations of the same source tree such as native and cross builds, multiple clangd views when one source compiles into several objects with different flags, reimporting later logs to refresh or patch a database, and verifying recorded paths against what clangd needs.
 
 ## Install
 
