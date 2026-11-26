@@ -4,7 +4,13 @@ GNU autotools/autoconf projects such as binutils, GCC, GDB, and glibc have no `c
 
 Autobear instead starts from a build log you already have. A strong LLM reads it with the source tree to work out the targets, configuration, and prerequisites, drives Bear through that reconstructed build to capture the real compiler commands, and a smaller LLM repairs whatever Bear's interception missed.
 
-It covers build profiles for different configurations of one source tree, clangd views for sources that compile into several objects, reimporting logs to refresh or patch a database, and verifying recorded paths.
+On top of what Bear captures on its own, autobear:
+
+- Works out the targets, configure options, and prerequisite steps from a build log and the source tree, so you don't need to already know the right invocation.
+- Repairs commands Bear's interception never sees: quiet or abbreviated output, libtool-wrapped compiles, shell conditionals in make recipes.
+- Keeps separate build profiles, such as native and cross, each with its own plan, log, and database, and lets you switch between them.
+- Builds multiple clangd views when one source compiles into several objects under different flags.
+- Reimports later logs to refresh or patch a database, and verifies recorded paths against what clangd needs.
 
 ## Install
 
