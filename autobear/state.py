@@ -64,7 +64,7 @@ def targets(value):
 
 DEFAULT_PROFILE = "default"
 DATABASE_NAME = "compile_commands.json"
-STATE_DIRECTORY = ".autocompdb"
+STATE_DIRECTORY = ".autobear"
 
 
 @contextmanager
@@ -232,7 +232,7 @@ class Plan:
         ):
             raise Error("The original log directory must be an absolute path.")
         if value.pop("build", None) != str(build):
-            raise Error("The build directory differs from the saved plan. Run autocompdb init again.")
+            raise Error("The build directory differs from the saved plan. Run autobear init again.")
         source = value.pop("source", None)
         if not isinstance(source, str) or not Path(source).is_absolute():
             raise Error("The saved source directory must be an absolute path.")

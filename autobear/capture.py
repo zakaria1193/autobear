@@ -13,7 +13,7 @@ from .state import Error, fields, read_json, strings, write_json
 
 SOURCE_SUFFIXES = {".c", ".C", ".cc", ".cp", ".cpp", ".cxx", ".c++", ".C++", ".m", ".mm", ".i", ".ii"}
 DIRECTORY = re.compile(r"^make(?:\[\d+\])?: (Entering|Leaving) directory [`'](.*)'$")
-STAGE = "autocompdb directory "
+STAGE = "autobear directory "
 ABBREVIATED_COMPILE = re.compile(r"^[ \t]+(?:CC|CXX)[ \t]{2,}(.+\.(?:o|lo|obj))[ \t]*$")
 LIBTOOL = re.compile(r"^libtool: compile:\s*")
 LIBTOOL_WRAPPER = re.compile(r"(?:^|\s)\S*[/]libtool\s.*--mode=compile(?:\s|$)")
@@ -677,7 +677,7 @@ def refresh_database(plan, get_llm, *, allow_empty=False):
 
 def patch(plan, get_llm):
     if not plan.log.is_file():
-        raise Error(f"No build log exists at {plan.log}. Run autocompdb build first.")
+        raise Error(f"No build log exists at {plan.log}. Run autobear build first.")
     entries = read_database(plan.database)
     print(f"Checking {plan.log} for commands that still need repair.", flush=True)
     with report_wait("Log coverage check"):

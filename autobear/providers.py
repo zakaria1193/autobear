@@ -18,7 +18,7 @@ from .state import Error
 CLI = {"claude-cli": "claude", "codex-cli": "codex", "agy-cli": "agy"}
 DEFAULT_PROVIDER = "codex-cli"
 RECOMMENDATION = ("Choose the strongest model you have, such as Claude Opus. "
-                  "Autocompdb calls it only when you import or repair a log.")
+                  "Autobear calls it only when you import or repair a log.")
 
 
 def token_sum(*counts):
@@ -77,7 +77,7 @@ class Provider:
         problem = self.unavailable()
         if problem:
             raise Error(problem)
-        template = files("autocompdb").joinpath("prompts", f"{task}.txt").read_text()
+        template = files("autobear").joinpath("prompts", f"{task}.txt").read_text()
         prompt = f"{template}\n\nInput data (JSON)\n{json.dumps(context)}"
         usage = Usage()
         self.usage.append(usage)
@@ -95,7 +95,7 @@ class Provider:
 
     def run_cli(self, prompt, usage):
         model = ["--model", self.model] if self.model else []
-        with tempfile.TemporaryDirectory(prefix="autocompdb-provider-") as temp:
+        with tempfile.TemporaryDirectory(prefix="autobear-provider-") as temp:
             output = Path(temp) / "response.json"
             if self.name == "claude-cli":
                 command = ["claude", "--print", "--tools", "", "--output-format", "json", *model]
@@ -243,7 +243,7 @@ def choose_model(label, provider, required, catalogs):
 
 def choose_provider(installed, catalogs):
     label = "LLM"
-    provider_env = "AUTOCOMPDB_PROVIDER"
+    provider_env = "AUTOBEAR_PROVIDER"
     name = os.getenv(provider_env)
     if name is None:
         ready = [*installed]
@@ -270,7 +270,7 @@ def choose_provider(installed, catalogs):
     elif name not in (*CLI, "openrouter"):
         raise Error(f"Invalid provider in {provider_env}.")
 
-    model_env = "AUTOCOMPDB_MODEL"
+    model_env = "AUTOBEAR_MODEL"
     model = os.getenv(model_env)
     required = name == "openrouter"
     if model is None:
@@ -282,7 +282,7 @@ def choose_provider(installed, catalogs):
 
 def setup_provider(path):
     installed = [name for name, command in CLI.items() if shutil.which(command)]
-    print(f"Set up the autocompdb LLM in {path}.")
+    print(f"Set up the autobear LLM in {path}.")
     print(RECOMMENDATION)
     try:
         provider = choose_provider(installed, {})
@@ -305,7 +305,7 @@ def setup_provider(path):
 
 def settings(*, query=False):
     config_home = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config")
-    path = config_home / "autocompdb" / "config.toml"
+    path = config_home / "autobear" / "config.toml"
     if query and not path.exists() and sys.stdin.isatty():
         setup_provider(path)
     if path.exists():
@@ -318,8 +318,8 @@ def settings(*, query=False):
     table = data.get("llm", {})
     if not isinstance(table, dict):
         raise Error(f"Expected an [llm] table in {path}.")
-    name = os.getenv("AUTOCOMPDB_PROVIDER", table.get("provider", DEFAULT_PROVIDER))
-    model = os.getenv("AUTOCOMPDB_MODEL", table.get("model", ""))
+    name = os.getenv("AUTOBEAR_PROVIDER", table.get("provider", DEFAULT_PROVIDER))
+    model = os.getenv("AUTOBEAR_MODEL", table.get("model", ""))
     if not isinstance(name, str) or name not in (*CLI, "openrouter") or not isinstance(model, str):
         raise Error(f"Invalid LLM provider or model in {path} or the environment.")
     return Provider(name, model)

@@ -117,4 +117,4 @@ def update_variants(plan, selected):
     for name in variants.keys() - updated.keys():
         (profile_state(plan.build, name) / DATABASE_NAME).unlink(missing_ok=True)
     if created:
-        print(f"Created clangd profiles {', '.join(created)}. Use autocompdb switch --list.", flush=True)
+        print(f"Created clangd profiles {', '.join(created)}. Use autobear switch --list.", flush=True)
