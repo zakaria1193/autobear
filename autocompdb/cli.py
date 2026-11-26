@@ -32,7 +32,7 @@ def positive(value):
 
 
 def arguments(argv):
-    parser = argparse.ArgumentParser(prog="autobear", description="Capture GNU build commands for clangd.")
+    parser = argparse.ArgumentParser(prog="autocompdb", description="Capture GNU build commands for clangd.")
     commands = parser.add_subparsers(dest="action", required=True)
     init = commands.add_parser("init", help="Import a build log and discover clangd profiles.")
     log = commands.add_parser("refresh", help="Update the selected build's databases from a log.")
@@ -249,9 +249,9 @@ def profile_choices(build, variants):
 
 def choose_profile(choices):
     if not sys.stdin.isatty():
-        raise Error("Specify a profile name or use autobear switch --list.")
+        raise Error("Specify a profile name or use autocompdb switch --list.")
     if not choices:
-        raise Error("No build profiles. Run autobear init first.")
+        raise Error("No build profiles. Run autocompdb init first.")
     selected = fzf_choice("Build profile", choices)
     if selected is not None:
         return selected
@@ -309,7 +309,7 @@ def main(argv=None, get_llm=None):
             activate_profile(plan, variant)
             if args.action == "build":
                 if plan.log_directory is not None:
-                    raise Error("This directory uses imported logs. Run autobear refresh to update its database.")
+                    raise Error("This directory uses imported logs. Run autocompdb refresh to update its database.")
                 bear = capture(plan, args.jobs)
                 unresolved = patch(plan, bear, get_llm)
                 conflict = configure_clangd(plan)
@@ -322,5 +322,5 @@ def main(argv=None, get_llm=None):
             database = profile_state(build, variant) / DATABASE_NAME if variant else plan.database
             return verify(plan, bear, args.sample_size, args.query_driver, database=database)
     except (Error, OSError, ValueError, subprocess.SubprocessError) as exc:
-        print(f"autobear: {exc}", file=sys.stderr)
+        print(f"autocompdb: {exc}", file=sys.stderr)
         return 1

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "autobear"
+name = "autocompdb"
 version = "0.1.0"
 description = "Capture compilation databases for GNU configure and make builds"
 readme = "README.md"
@@ -11,10 +11,10 @@ requires-python = ">=3.11"
 dependencies = ["PyYAML>=6"]
 
 [project.scripts]
-autobear = "autobear.cli:main"
+autocompdb = "autocompdb.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["autobear*"]
+include = ["autocompdb*"]
 
 [tool.setuptools.package-data]
-autobear = ["prompts/*.txt"]
+autocompdb = ["prompts/*.txt"]

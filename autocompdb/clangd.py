@@ -30,7 +30,7 @@ def configure_clangd(plan):
         managed = list(MANAGED.finditer(content))
         user = MANAGED.sub("", content)
         if BEGIN in user or END in user or len(managed) > 1:
-            print(f"Invalid autobear block in {path}.", file=sys.stderr)
+            print(f"Invalid autocompdb block in {path}.", file=sys.stderr)
             conflict = True
             continue
         try:
@@ -113,7 +113,7 @@ def verify(plan, bear, sample_size, query_drivers, *, database=None):
     if not entries:
         if plan.log_directory is not None:
             raise Error("The compilation database is empty. Import a log that contains compiler commands.")
-        raise Error("The compilation database is empty. Run autobear build in a fresh build directory.")
+        raise Error("The compilation database is empty. Run autocompdb build in a fresh build directory.")
     clangd = shutil.which("clangd")
     if not clangd:
         raise Error("Install clangd and add it to PATH.")

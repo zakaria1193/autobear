@@ -11,12 +11,12 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import patch
 
-from autobear.capture import BEAR_CONFIG, entry_args, entry_location, read_database
-from autobear.clangd import configure_clangd
-from autobear.cli import main
-from autobear.progress import report_wait
-from autobear.providers import Model, Provider, choose_model, choose_provider, model_catalog, settings
-from autobear.state import Error, Plan
+from autocompdb.capture import BEAR_CONFIG, entry_args, entry_location, read_database
+from autocompdb.clangd import configure_clangd
+from autocompdb.cli import main
+from autocompdb.progress import report_wait
+from autocompdb.providers import Model, Provider, choose_model, choose_provider, model_catalog, settings
+from autocompdb.state import Error, Plan
 
 
 def plan_response(**updates):
@@ -61,7 +61,7 @@ class ProgressTest(unittest.TestCase):
             if "still running" in message:
                 heartbeat.set()
 
-        with patch("autobear.progress.print", side_effect=record, create=True):
+        with patch("autocompdb.progress.print", side_effect=record, create=True):
             with report_wait("Build analysis", interval=0.01):
                 self.assertTrue(heartbeat.wait(2))
         self.assertIn("Build analysis still running", messages[0][0])
@@ -86,8 +86,8 @@ class ProvidersTest(unittest.TestCase):
                             Path(output).write_text(value)
                         return subprocess.CompletedProcess(command, int(mode == "failed"),
                                                            json.dumps(envelope(value)), "")
-                    with patch("autobear.providers.shutil.which", return_value="/bin/provider"), \
-                            patch("autobear.providers.subprocess.run", side_effect=run):
+                    with patch("autocompdb.providers.shutil.which", return_value="/bin/provider"), \
+                            patch("autocompdb.providers.subprocess.run", side_effect=run):
                         self.check_response(Provider(name, "example"), mode)
 
     def test_openrouter_response_fixtures(self):
@@ -101,7 +101,7 @@ class ProvidersTest(unittest.TestCase):
                     value = '{"targets":["all"]}' if mode == "valid" else "[]"
                     return io.StringIO(json.dumps({"choices": [{"message": {"content": value}}]}))
                 with patch.dict(os.environ, {"OPENROUTER_API_KEY": "fixture"}), \
-                        patch("autobear.providers.urlopen", side_effect=open_response):
+                        patch("autocompdb.providers.urlopen", side_effect=open_response):
                     self.check_response(Provider("openrouter", "example"), mode)
 
     def check_response(self, provider, mode):
@@ -119,7 +119,7 @@ class ProvidersTest(unittest.TestCase):
             log = root / "build.log"
             log.write_text("gcc -c main.c -o main.o\n")
             config_home = root / "config"
-            config = config_home / "autobear" / "config.toml"
+            config = config_home / "autocompdb" / "config.toml"
             env = {"XDG_CONFIG_HOME": str(config_home), "OPENROUTER_API_KEY": "fixture-key"}
             catalog = {"models": [
                 {"slug": "strong", "display_name": "Strong Model", "visibility": "list"},
@@ -134,12 +134,12 @@ class ProvidersTest(unittest.TestCase):
                 return plan_response()
 
             with patch.dict(os.environ, env, clear=True), \
-                    patch("autobear.providers.sys.stdin.isatty", return_value=True), \
-                    patch("autobear.providers.shutil.which", side_effect=lambda cmd: cmd if cmd == "codex" else None), \
-                    patch("autobear.providers.subprocess.run", return_value=result) as query, \
+                    patch("autocompdb.providers.sys.stdin.isatty", return_value=True), \
+                    patch("autocompdb.providers.shutil.which", side_effect=lambda cmd: cmd if cmd == "codex" else None), \
+                    patch("autocompdb.providers.subprocess.run", return_value=result) as query, \
                     patch("builtins.input", side_effect=["invalid", "", "nope", "1"]) as ask, \
                     patch.object(Provider, "request", autospec=True, side_effect=request), \
-                    patch("autobear.cli.refresh_profile", return_value=0), \
+                    patch("autocompdb.cli.refresh_profile", return_value=0), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 args = ["init", str(log), str(root), "--build", str(root / "output")]
                 self.assertEqual(main(args), 0)
@@ -159,7 +159,7 @@ class ProvidersTest(unittest.TestCase):
 
     def test_old_role_tables_need_one_llm_table(self):
         with tempfile.TemporaryDirectory() as temp:
-            config = Path(temp) / "autobear" / "config.toml"
+            config = Path(temp) / "autocompdb" / "config.toml"
             config.parent.mkdir()
             config.write_text('[architect]\nprovider = "claude-cli"\n')
             with patch.dict(os.environ, {"XDG_CONFIG_HOME": temp}, clear=True), \
@@ -171,12 +171,12 @@ class ProvidersTest(unittest.TestCase):
             {"id": "example/json", "name": "JSON Model", "supported_parameters": ["response_format"]},
             {"id": "example/text", "supported_parameters": []},
         ]}
-        with patch("autobear.providers.urlopen", return_value=io.StringIO(json.dumps(catalog))) as query:
+        with patch("autocompdb.providers.urlopen", return_value=io.StringIO(json.dumps(catalog))) as query:
             self.assertEqual(model_catalog("openrouter"), [Model("example/json", "JSON Model")])
         self.assertEqual(query.call_args.args[0].full_url, "https://openrouter.ai/api/v1/models")
 
     def test_catalog_failure_allows_manual_model_id(self):
-        with patch("autobear.providers.model_catalog", side_effect=OSError), \
+        with patch("autocompdb.providers.model_catalog", side_effect=OSError), \
                 patch("builtins.input", return_value="custom"), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(choose_model("LLM", "codex-cli", True, {}), "custom")
 
@@ -196,21 +196,21 @@ class ProvidersTest(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, f"{selected}\n")
 
         with patch.dict(os.environ, {}, clear=True), \
-                patch("autobear.selection.shutil.which", return_value="/usr/bin/fzf"), \
-                patch("autobear.selection.subprocess.run", side_effect=select), \
+                patch("autocompdb.selection.shutil.which", return_value="/usr/bin/fzf"), \
+                patch("autocompdb.selection.subprocess.run", side_effect=select), \
                 patch("builtins.input", side_effect=AssertionError("fzf handles both selections")):
             self.assertEqual(choose_provider(["codex-cli"], {"codex-cli": models}),
                              Provider("codex-cli", "model-29"))
 
     def test_noninteractive_init_keeps_environment_settings_without_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
-            env = {"XDG_CONFIG_HOME": temp, "AUTOBEAR_PROVIDER": "agy-cli", "AUTOBEAR_MODEL": "chosen"}
+            env = {"XDG_CONFIG_HOME": temp, "AUTOCOMPDB_PROVIDER": "agy-cli", "AUTOCOMPDB_MODEL": "chosen"}
             with patch.dict(os.environ, env, clear=True), \
-                    patch("autobear.providers.sys.stdin.isatty", return_value=False), \
+                    patch("autocompdb.providers.sys.stdin.isatty", return_value=False), \
                     patch("builtins.input") as ask:
                 self.assertEqual(settings(query=True), Provider("agy-cli", "chosen"))
                 ask.assert_not_called()
-            self.assertFalse((Path(temp) / "autobear" / "config.toml").exists())
+            self.assertFalse((Path(temp) / "autocompdb" / "config.toml").exists())
 
 
 
@@ -254,7 +254,7 @@ class StateTest(unittest.TestCase):
                            + "bison spec.y -o generated.c\ngcc -c generated.c -o generated.o\n")
             provider = RecordedProvider(plan_response())
             args = ["init", str(log), str(root), "--build", str(root / "build"), "--target", "all-ld"]
-            with patch("autobear.cli.refresh_profile", return_value=0):
+            with patch("autocompdb.cli.refresh_profile", return_value=0):
                 self.assertEqual(main(args, lambda: provider), 0)
             self.assertEqual(Plan.load(root / "build").targets, ["all-ld"])
             self.assertEqual(len(provider.calls), 1)
@@ -702,7 +702,7 @@ class RefreshTest(unittest.TestCase):
             generated_globs=["generated.c"],
         ), repair=repair_log)
 
-        with patch("autobear.cli.providers.settings", return_value=llm) as settings_for:
+        with patch("autocompdb.cli.providers.settings", return_value=llm) as settings_for:
             status, error = self.invoke([
                 "init", str(self.log), str(self.source), "--log-directory", "/remote/job",
             ])
@@ -743,7 +743,7 @@ class RefreshTest(unittest.TestCase):
         args = ["refresh", str(self.log), "--log-directory", "/remote/job"]
         with tempfile.TemporaryDirectory() as config_home, \
                 patch.dict(os.environ, {"XDG_CONFIG_HOME": config_home, "OPENROUTER_API_KEY": "",
-                                        "AUTOBEAR_PROVIDER": "openrouter"}):
+                                        "AUTOCOMPDB_PROVIDER": "openrouter"}):
             status, error = self.invoke(args)
         self.assertEqual(status, 1)
         self.assertIn("OpenRouter needs a model", error)

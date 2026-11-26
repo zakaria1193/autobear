@@ -9,9 +9,9 @@ run() {
 }
 
 version=4.2.4
-prefix=${AUTOBEAR_INSTALL_PREFIX:-"$HOME/.local"}
+prefix=${AUTOCOMPDB_INSTALL_PREFIX:-"$HOME/.local"}
 bin_dir="$prefix/bin"
-lib_dir="$prefix/lib/autobear"
+lib_dir="$prefix/lib/autocompdb"
 bear="$bin_dir/bear"
 installed_version=$("$bear" --version 2>/dev/null || true)
 if [[ $installed_version =~ ^bear[[:space:]]+4\.([0-9]+)\.([0-9]+) ]] &&
@@ -79,7 +79,7 @@ run dpkg-deb --extract "$stage/$package" "$stage/package"
 
 payload="$stage/package/usr/libexec/bear"
 driver="$payload/bin/bear-driver"
-check_source=autobear-compatibility-check.c
+check_source=autocompdb-compatibility-check.c
 if ! printf 'gcc -c %s\n' "$check_source" |
     run "$driver" parse-sh --directory "$stage" --output "$stage/check.json" ||
     ! grep --fixed-strings --quiet "$check_source" "$stage/check.json"; then
@@ -96,7 +96,7 @@ fi
 run "$install_dir/bin/bear-driver" parse-sh --help >/dev/null
 
 link_stage=$(run mktemp --directory "$bin_dir/.bear-link.XXXXXX")
-run ln --symbolic -- "../lib/autobear/bear-$version/bin/bear-driver" "$link_stage/bear"
+run ln --symbolic -- "../lib/autocompdb/bear-$version/bin/bear-driver" "$link_stage/bear"
 run mv --no-target-directory -- "$link_stage/bear" "$bear"
 run "$bear" --version
 printf 'Installed %s. Put %s before the system directories on PATH.\n' "$bear" "$bin_dir"

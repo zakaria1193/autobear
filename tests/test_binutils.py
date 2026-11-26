@@ -6,17 +6,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from autobear.capture import entry_location, read_database
-from autobear.cli import main
-from test_autobear import RecordedProvider, plan_response, save_local_plan
+from autocompdb.capture import entry_location, read_database
+from autocompdb.cli import main
+from test_autocompdb import RecordedProvider, plan_response, save_local_plan
 
 
-BINUTILS = os.getenv("AUTOBEAR_BINUTILS_SRC")
+BINUTILS = os.getenv("AUTOCOMPDB_BINUTILS_SRC")
 
 
 @unittest.skipUnless(BINUTILS and platform.machine() == "x86_64"
                      and all(shutil.which(tool) for tool in ("bear", "clangd", "gcc", "make")),
-                     "Set AUTOBEAR_BINUTILS_SRC to a disposable native binutils source tree.")
+                     "Set AUTOCOMPDB_BINUTILS_SRC to a disposable native binutils source tree.")
 class BinutilsTest(unittest.TestCase):
     def test_capture_native_linker(self):
         source = Path(BINUTILS).resolve()
@@ -30,11 +30,11 @@ class BinutilsTest(unittest.TestCase):
         def settings():
             return llm
 
-        with tempfile.TemporaryDirectory(prefix="autobear-ld-") as temp:
+        with tempfile.TemporaryDirectory(prefix="autocompdb-ld-") as temp:
             build = Path(temp).resolve()
             flags = ["--build", str(build)]
             save_local_plan(source, build, plan)
-            jobs = os.getenv("AUTOBEAR_TEST_JOBS", "4")
+            jobs = os.getenv("AUTOCOMPDB_TEST_JOBS", "4")
             self.assertEqual(main(["build", "--jobs", jobs, *flags], settings), 0)
             entries = read_database(build / "compile_commands.json")
             locations = {entry_location(entry)[:2] for entry in entries}

@@ -642,7 +642,7 @@ def refresh_database(plan, bear, get_llm):
 
 def patch(plan, bear, get_llm):
     if not plan.log.is_file():
-        raise Error(f"No build log exists at {plan.log}. Run autobear build first.")
+        raise Error(f"No build log exists at {plan.log}. Run autocompdb build first.")
     entries = read_database(plan.database)
     print(f"Checking {plan.log} for commands that still need repair.", flush=True)
     with report_wait("Log coverage check"):
