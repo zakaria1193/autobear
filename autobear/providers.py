@@ -15,7 +15,9 @@ from .selection import fzf_choice
 from .state import Error
 
 CLI = {"claude-cli": "claude", "codex-cli": "codex", "agy-cli": "agy"}
-DEFAULTS = {"architect": "codex-cli", "worker": "openrouter"}
+DEFAULT_PROVIDER = "codex-cli"
+RECOMMENDATION = ("Choose the strongest model you have, such as Claude Opus. "
+                  "Autobear calls it only when you import or repair a log.")
 
 
 @dataclass(frozen=True)
@@ -31,11 +33,11 @@ class Provider:
             return f"{CLI[self.name]} is absent from PATH."
         return ""
 
-    def request(self, role, context):
+    def request(self, task, context):
         problem = self.unavailable()
         if problem:
             raise Error(problem)
-        template = files("autobear").joinpath("prompts", f"{role}.txt").read_text()
+        template = files("autobear").joinpath("prompts", f"{task}.txt").read_text()
         prompt = f"{template}\n\nInput data (JSON)\n{json.dumps(context)}"
         try:
             output = self.openrouter(prompt) if self.name == "openrouter" else self.run_cli(prompt)
@@ -183,15 +185,15 @@ def choose_model(label, provider, required, catalogs):
         print("Select a model from the list.")
 
 
-def choose_provider(role, installed, catalogs):
-    label = "Architect (strong model)" if role == "architect" else "Worker (small model)"
-    provider_env = f"AUTOBEAR_{role.upper()}_PROVIDER"
+def choose_provider(installed, catalogs):
+    label = "LLM"
+    provider_env = "AUTOBEAR_PROVIDER"
     name = os.getenv(provider_env)
     if name is None:
         ready = [*installed]
         if os.getenv("OPENROUTER_API_KEY"):
             ready.append("openrouter")
-        default = DEFAULTS[role]
+        default = DEFAULT_PROVIDER
         if default not in ready:
             default = ready[0] if ready else "openrouter"
         options = [*installed, "openrouter"]
@@ -212,9 +214,9 @@ def choose_provider(role, installed, catalogs):
     elif name not in (*CLI, "openrouter"):
         raise Error(f"Invalid provider in {provider_env}.")
 
-    model_env = f"AUTOBEAR_{role.upper()}_MODEL"
+    model_env = "AUTOBEAR_MODEL"
     model = os.getenv(model_env)
-    required = role == "worker" or name == "openrouter"
+    required = name == "openrouter"
     if model is None:
         model = choose_model(label, name, required, catalogs)
     if required and not model:
@@ -222,19 +224,16 @@ def choose_provider(role, installed, catalogs):
     return Provider(name, model)
 
 
-def setup_providers(path):
+def setup_provider(path):
     installed = [name for name, command in CLI.items() if shutil.which(command)]
-    print(f"Set up autobear providers in {path}.")
+    print(f"Set up the autobear LLM in {path}.")
+    print(RECOMMENDATION)
     try:
-        catalogs = {}
-        selections = {role: choose_provider(role, installed, catalogs) for role in DEFAULTS}
+        provider = choose_provider(installed, {})
     except (EOFError, KeyboardInterrupt) as exc:
         raise Error("Provider setup canceled.") from exc
-    content = "".join(
-        f"[{role}]\nprovider = {json.dumps(provider.name)}\n"
-        f"model = {json.dumps(provider.model, ensure_ascii=False)}\n\n"
-        for role, provider in selections.items()
-    )
+    content = (f"[llm]\nprovider = {json.dumps(provider.name)}\n"
+               f"model = {json.dumps(provider.model, ensure_ascii=False)}\n")
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=path.parent) as temp:
         config = Path(temp) / path.name
@@ -248,20 +247,22 @@ def setup_providers(path):
             print(f"Saved provider settings in {path}.")
 
 
-def settings(role, *, query=False):
+def settings(*, query=False):
     path = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config") / "autobear" / "config.toml"
     if query and not path.exists() and sys.stdin.isatty():
-        setup_providers(path)
+        setup_provider(path)
     if path.exists():
         with path.open("rb") as stream:
             data = tomllib.load(stream)
     else:
         data = {}
-    table = data.get(role, {})
+    if "llm" not in data and ("architect" in data or "worker" in data):
+        raise Error(f"Replace the [architect] and [worker] tables in {path} with one [llm] table.")
+    table = data.get("llm", {})
     if not isinstance(table, dict):
-        raise Error(f"Expected a [{role}] table in {path}.")
-    name = os.getenv(f"AUTOBEAR_{role.upper()}_PROVIDER", table.get("provider", DEFAULTS[role]))
-    model = os.getenv(f"AUTOBEAR_{role.upper()}_MODEL", table.get("model", ""))
+        raise Error(f"Expected an [llm] table in {path}.")
+    name = os.getenv("AUTOBEAR_PROVIDER", table.get("provider", DEFAULT_PROVIDER))
+    model = os.getenv("AUTOBEAR_MODEL", table.get("model", ""))
     if not isinstance(name, str) or name not in (*CLI, "openrouter") or not isinstance(model, str):
-        raise Error(f"Invalid {role} provider or model in {path} or the environment.")
-    return {role: Provider(name, model)}
+        raise Error(f"Invalid LLM provider or model in {path} or the environment.")
+    return Provider(name, model)

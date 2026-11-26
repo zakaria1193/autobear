@@ -52,7 +52,7 @@ def arguments(argv):
                              help="Directory for the database and plan. Defaults to the current directory.")
     init.add_argument("log", type=Path, help="Representative log from the build to analyze.")
     init.add_argument("source", type=Path, help="Source directory.")
-    init.add_argument("--profile", help="Profile name. Omit to let the architect infer a name.")
+    init.add_argument("--profile", help="Profile name. Omit to let the LLM infer a name.")
     init.add_argument("--target", action="append", default=[], help="Make target. Repeat for more targets.")
     build.add_argument("--jobs", type=positive, help="Number of parallel make jobs.")
     check.add_argument("--sample-size", type=positive, default=2, help="Maximum sample size per file group.")
@@ -107,7 +107,7 @@ def choose_import_profile(plan, suggestion, fallback, plans, matches, variants):
             return name
 
 
-def init(args, build, get_architect, get_worker):
+def init(args, build, get_llm):
     source = args.source.resolve()
     if not source.is_dir():
         raise Error(f"No source directory exists at {source}.")
@@ -149,18 +149,18 @@ def init(args, build, get_architect, get_worker):
         if abbreviated:
             print(f"Found {len(abbreviated)} abbreviated compile steps.", flush=True)
             if not reuse:
-                print("The architect will annotate the missing commands.", flush=True)
+                print("The LLM will annotate the missing commands.", flush=True)
                 context["abbreviated_builds"] = quiet_evidence(source, abbreviated)
     if reuse:
         print(f"Reusing the saved plan for profile {name}.", flush=True)
-        return refresh_profile(existing, log, log_directory, get_worker, selected)
-    architect = get_architect()["architect"]
-    print(f"Architect provider {architect.name} ({architect.model or 'default model'}). "
+        return refresh_profile(existing, log, log_directory, get_llm, selected)
+    llm = get_llm()
+    print(f"LLM {llm.name} ({llm.model or 'default model'}). "
           "Analyzing targets, configure options, and prerequisites. This can take a few minutes.", flush=True)
-    with report_wait("Architect analysis"):
-        response = architect.request("architect", context)
+    with report_wait("Build analysis"):
+        response = llm.request("analyze", context)
     if not isinstance(response, dict):
-        raise Error("Expected an object for the architect response.")
+        raise Error("Expected an object for the analysis response.")
     response = dict(response)
     suggestion = response.pop("profile_name", "")
     plan = Plan.validate(source, build, response, selected_targets)
@@ -194,10 +194,10 @@ def init(args, build, get_architect, get_worker):
         print(f"Prerequisite in {step['directory']}. Make targets {shlex.join(step['targets'])}", flush=True)
     if plan.generated_globs:
         print(f"Generated file patterns {shlex.join(plan.generated_globs)}", flush=True)
-    return refresh_profile(plan, log, log_directory, get_worker, selected)
+    return refresh_profile(plan, log, log_directory, get_llm, selected)
 
 
-def refresh(args, build, get_worker):
+def refresh(args, build, get_llm):
     path = log_path(args)
     selected = active_profile(build)
     name = saved_variants(build).get(selected, selected)
@@ -205,10 +205,10 @@ def refresh(args, build, get_worker):
         plan = Plan.load(build, name)
     else:
         plan = Plan(build, build, [], [], ["all"], [], analyzed=False)
-    return refresh_profile(plan, path, args.log_directory, get_worker, selected)
+    return refresh_profile(plan, path, args.log_directory, get_llm, selected)
 
 
-def refresh_profile(plan, path, log_directory, get_worker, selected):
+def refresh_profile(plan, path, log_directory, get_llm, selected):
     plan.log_directory = log_directory or plan.log_directory or plan.build
     config = plan.state / "bear.yml"
     if not config.exists():
@@ -227,7 +227,7 @@ def refresh_profile(plan, path, log_directory, get_worker, selected):
                 temporary.unlink(missing_ok=True)
     plan.save()
     activate_profile(plan)
-    status = refresh_database(plan, bear, get_worker)
+    status = refresh_database(plan, bear, get_llm)
     update_variants(plan, selected)
     return status
 
@@ -283,10 +283,9 @@ def switch_profile(args, build):
     return 0
 
 
-def main(argv=None, get_providers=None):
+def main(argv=None, get_llm=None):
     args = arguments(argv)
-    get_worker = get_providers or (lambda: providers.settings("worker"))
-    get_architect = get_providers or (lambda: providers.settings("architect", query=True))
+    get_llm = get_llm or (lambda: providers.settings(query=args.action == "init"))
     build = args.build.resolve()
     try:
         state = build / ".autobear"
@@ -294,9 +293,9 @@ def main(argv=None, get_providers=None):
             if args.action == "switch":
                 return switch_profile(args, build)
             if args.action == "init":
-                return init(args, build, get_architect, get_worker)
+                return init(args, build, get_llm)
             if args.action == "refresh":
-                return refresh(args, build, get_worker)
+                return refresh(args, build, get_llm)
             selected = active_profile(build)
             owner = saved_variants(build).get(selected)
             plan = Plan.load(build, owner)
@@ -306,12 +305,12 @@ def main(argv=None, get_providers=None):
                 if plan.log_directory is not None:
                     raise Error("This directory uses imported logs. Run autobear refresh to update its database.")
                 bear = capture(plan, args.jobs)
-                unresolved = patch(plan, bear, get_worker)
+                unresolved = patch(plan, bear, get_llm)
                 conflict = configure_clangd(plan)
                 return int(unresolved or conflict)
             bear = bear_command(plan)
             if args.action == "patch":
-                unresolved = patch(plan, bear, get_worker)
+                unresolved = patch(plan, bear, get_llm)
                 update_variants(plan, selected)
                 return int(unresolved)
             database = profile_state(build, variant) / DATABASE_NAME if variant else plan.database

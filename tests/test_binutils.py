@@ -25,10 +25,10 @@ class BinutilsTest(unittest.TestCase):
                             "--disable-nls", "--disable-werror", "--without-zstd"],
             targets=["all-ld"], generated_globs=["ld/eelf*.c"],
         )
-        worker = RecordedProvider({"repairs": []})
+        llm = RecordedProvider({"repairs": []})
 
         def settings():
-            return {"worker": worker}
+            return llm
 
         with tempfile.TemporaryDirectory(prefix="autobear-ld-") as temp:
             build = Path(temp).resolve()
