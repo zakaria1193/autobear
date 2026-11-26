@@ -151,7 +151,7 @@ class Plan:
     @classmethod
     def validate(cls, source, build, response, explicit=()):
         if not isinstance(response, dict):
-            raise Error("Expected an object for the architect response.")
+            raise Error("Expected an object for the analysis response.")
         response = dict(response)
         annotations = quiet_annotations(response.pop("quiet_builds", {}))
         fields(response, "configure_args prerequisites targets generated_globs")
@@ -253,7 +253,7 @@ def logged_configure_args(path):
     return next(iter(commands), None)
 
 
-def architect_log(path):
+def analysis_log(path):
     directory = re.compile(r"^make(?:\[\d+\])?: Entering directory [`'](.*)'$")
     setup = re.compile(
         r"(?:^|[\s/])(?:configure|config\.status|bison|yacc|flex|"
@@ -295,7 +295,7 @@ def architect_log(path):
 
 
 def project_context(source, build, explicit, log):
-    build_log, log_components = architect_log(log)
+    build_log, log_components = analysis_log(log)
     excerpt_paths = [root / name for root in (source, build) for name in (
         "config.status", "configure", "configure.ac", "Makefile", "Makefile.in", "Makefile.am"
     )]

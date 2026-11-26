@@ -35,18 +35,20 @@ class RecordedProvider:
     name = "recorded"
     model = ""
 
-    def __init__(self, answer):
+    def __init__(self, answer=None, **by_task):
         self.answer = answer
+        self.by_task = by_task
         self.calls = []
 
     def unavailable(self):
         return ""
 
-    def request(self, role, context):
-        self.calls.append((role, context))
-        if callable(self.answer):
-            return self.answer(context)
-        return self.answer
+    def request(self, task, context):
+        self.calls.append((task, context))
+        answer = self.by_task.get(task, self.answer)
+        if callable(answer):
+            return answer(context)
+        return answer
 
 
 class ProgressTest(unittest.TestCase):
@@ -60,10 +62,10 @@ class ProgressTest(unittest.TestCase):
                 heartbeat.set()
 
         with patch("autobear.progress.print", side_effect=record, create=True):
-            with report_wait("Architect analysis", interval=0.01):
+            with report_wait("Build analysis", interval=0.01):
                 self.assertTrue(heartbeat.wait(2))
-        self.assertIn("Architect analysis still running", messages[0][0])
-        self.assertIn("Architect analysis finished", messages[-1][0])
+        self.assertIn("Build analysis still running", messages[0][0])
+        self.assertIn("Build analysis finished", messages[-1][0])
         self.assertTrue(all(flush for _, flush in messages))
 
 
@@ -104,14 +106,14 @@ class ProvidersTest(unittest.TestCase):
 
     def check_response(self, provider, mode):
         if mode == "valid":
-            self.assertEqual(provider.request("architect", {}), {"targets": ["all"]})
+            self.assertEqual(provider.request("analyze", {}), {"targets": ["all"]})
         else:
             with self.assertRaises(Error):
-                provider.request("architect", {})
+                provider.request("analyze", {})
 
 
 
-    def test_interactive_init_saves_both_providers_before_calling_the_architect(self):
+    def test_interactive_init_saves_the_llm_before_analyzing(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             log = root / "build.log"
@@ -126,8 +128,8 @@ class ProvidersTest(unittest.TestCase):
             ]}
             result = subprocess.CompletedProcess(["codex", "debug", "models"], 0, json.dumps(catalog), "")
 
-            def request(provider, role, context):
-                self.assertEqual((role, provider.name, provider.model), ("architect", "codex-cli", "strong"))
+            def request(provider, task, context):
+                self.assertEqual((task, provider.name, provider.model), ("analyze", "codex-cli", "strong"))
                 self.assertTrue(config.is_file())
                 return plan_response()
 
@@ -135,23 +137,34 @@ class ProvidersTest(unittest.TestCase):
                     patch("autobear.providers.sys.stdin.isatty", return_value=True), \
                     patch("autobear.providers.shutil.which", side_effect=lambda cmd: cmd if cmd == "codex" else None), \
                     patch("autobear.providers.subprocess.run", return_value=result) as query, \
-                    patch("builtins.input", side_effect=["invalid", "", "1", "1", "nope", "2"]) as ask, \
+                    patch("builtins.input", side_effect=["invalid", "", "nope", "1"]) as ask, \
                     patch.object(Provider, "request", autospec=True, side_effect=request), \
                     patch("autobear.cli.refresh_profile", return_value=0), \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 args = ["init", str(log), str(root), "--build", str(root / "output")]
                 self.assertEqual(main(args), 0)
-                self.assertEqual(ask.call_count, 6)
-                self.assertEqual(settings("worker")["worker"], Provider("codex-cli", "small"))
+                self.assertEqual(ask.call_count, 4)
+                self.assertEqual(settings(), Provider("codex-cli", "strong"))
                 self.assertEqual(main(args), 0)
-                self.assertEqual(ask.call_count, 6)
+                self.assertEqual(ask.call_count, 4)
                 query.assert_called_once()
                 self.assertEqual(query.call_args.args[0], ["codex", "debug", "models"])
+            self.assertIn("such as Claude Opus", output.getvalue())
             self.assertIn("Select a provider from the list.", output.getvalue())
             self.assertIn("Select a model from the list.", output.getvalue())
             self.assertIn("2. Small Model (small)", output.getvalue())
             self.assertNotIn("Hidden Model", output.getvalue())
+            self.assertTrue(config.read_text().startswith("[llm]\n"))
             self.assertNotIn("fixture-key", config.read_text())
+
+    def test_old_role_tables_need_one_llm_table(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "autobear" / "config.toml"
+            config.parent.mkdir()
+            config.write_text('[architect]\nprovider = "claude-cli"\n')
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": temp}, clear=True), \
+                    self.assertRaisesRegex(Error, r"with one \[llm\] table"):
+                settings()
 
     def test_openrouter_catalog_filters_models_without_json_mode(self):
         catalog = {"data": [
@@ -165,7 +178,7 @@ class ProvidersTest(unittest.TestCase):
     def test_catalog_failure_allows_manual_model_id(self):
         with patch("autobear.providers.model_catalog", side_effect=OSError), \
                 patch("builtins.input", return_value="custom"), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(choose_model("Worker", "codex-cli", True, {}), "custom")
+            self.assertEqual(choose_model("LLM", "codex-cli", True, {}), "custom")
 
     def test_fzf_selects_provider_and_searches_the_full_model_catalog(self):
         models = [Model(f"model-{index}", f"Model {index}") for index in range(30)]
@@ -186,17 +199,16 @@ class ProvidersTest(unittest.TestCase):
                 patch("autobear.selection.shutil.which", return_value="/usr/bin/fzf"), \
                 patch("autobear.selection.subprocess.run", side_effect=select), \
                 patch("builtins.input", side_effect=AssertionError("fzf handles both selections")):
-            self.assertEqual(choose_provider("architect", ["codex-cli"], {"codex-cli": models}),
+            self.assertEqual(choose_provider(["codex-cli"], {"codex-cli": models}),
                              Provider("codex-cli", "model-29"))
 
     def test_noninteractive_init_keeps_environment_settings_without_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
-            env = {"XDG_CONFIG_HOME": temp, "AUTOBEAR_ARCHITECT_PROVIDER": "agy-cli",
-                   "AUTOBEAR_ARCHITECT_MODEL": "chosen"}
+            env = {"XDG_CONFIG_HOME": temp, "AUTOBEAR_PROVIDER": "agy-cli", "AUTOBEAR_MODEL": "chosen"}
             with patch.dict(os.environ, env, clear=True), \
                     patch("autobear.providers.sys.stdin.isatty", return_value=False), \
                     patch("builtins.input") as ask:
-                self.assertEqual(settings("architect", query=True)["architect"], Provider("agy-cli", "chosen"))
+                self.assertEqual(settings(query=True), Provider("agy-cli", "chosen"))
                 ask.assert_not_called()
             self.assertFalse((Path(temp) / "autobear" / "config.toml").exists())
 
@@ -243,11 +255,11 @@ class StateTest(unittest.TestCase):
             provider = RecordedProvider(plan_response())
             args = ["init", str(log), str(root), "--build", str(root / "build"), "--target", "all-ld"]
             with patch("autobear.cli.refresh_profile", return_value=0):
-                self.assertEqual(main(args, lambda: {"architect": provider}), 0)
+                self.assertEqual(main(args, lambda: provider), 0)
             self.assertEqual(Plan.load(root / "build").targets, ["all-ld"])
             self.assertEqual(len(provider.calls), 1)
-            role, context = provider.calls[0]
-            self.assertEqual(role, "architect")
+            task, context = provider.calls[0]
+            self.assertEqual(task, "analyze")
             excerpt = "\n".join(context["build_log_excerpt"])
             self.assertIn("./configure --enable-variant", excerpt)
             self.assertIn("bison spec.y -o generated.c", excerpt)
@@ -255,16 +267,16 @@ class StateTest(unittest.TestCase):
             self.assertLess(len(context["build_log_excerpt"]), 40)
             provider.answer = plan_response(prerequisites=[{"directory": "..", "targets": ["all"]}])
             with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(main(args, lambda: {"architect": provider}), 1)
+                self.assertEqual(main(args, lambda: provider), 1)
             self.assertEqual(Plan.load(root / "build").targets, ["all-ld"])
 
 
-    def test_init_requires_a_nonempty_log_before_calling_the_architect(self):
+    def test_init_requires_a_nonempty_log_before_calling_the_llm(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
 
             def unexpected_provider():
-                self.fail("The architect requires a build log.")
+                self.fail("The analysis requires a build log.")
 
             log = root / "build.log"
             args = ["init", str(log), str(root), "--build", str(root / "db")]
@@ -345,12 +357,12 @@ class BuildTest(unittest.TestCase):
                     })
             return {"repairs": repairs}
 
-        self.worker = RecordedProvider(recorded_repairs)
+        self.llm = RecordedProvider(recorded_repairs)
 
     def run_cli(self, action, *flags):
         args = [action, "--build", str(self.build), *flags]
         with contextlib.redirect_stdout(io.StringIO()) as stdout, contextlib.redirect_stderr(io.StringIO()) as stderr:
-            status = main(args, lambda: {"worker": self.worker})
+            status = main(args, lambda: self.llm)
         return status, stdout.getvalue() + stderr.getvalue()
 
     def assert_status(self, expected, action, *flags):
@@ -371,12 +383,12 @@ class BuildTest(unittest.TestCase):
             (nested, nested / "generated.c", nested / "generated.o"),
         })
         self.assertTrue(any("-DLABEL=a b" in entry_args(entry) for entry in entries))
-        self.assertTrue(self.worker.calls)
+        self.assertTrue(self.llm.calls)
         original = database.read_bytes()
-        calls = len(self.worker.calls)
+        calls = len(self.llm.calls)
         self.assert_status(0, "patch")
         self.assert_status(0, "build")
-        self.assertEqual(len(self.worker.calls), calls)
+        self.assertEqual(len(self.llm.calls), calls)
         self.assertEqual(database.read_bytes(), original)
         output = self.assert_status(0, "verify")
         self.assertEqual(output.count("clangd parsed "), 2)
@@ -388,17 +400,17 @@ class BuildTest(unittest.TestCase):
         self.assertIn(str(path), output)
         self.assertIn("false", path.read_text())
 
-    def test_worker_failure_preserves_capture_and_allows_retry(self):
+    def test_llm_failure_preserves_capture_and_allows_retry(self):
         def fail(_):
-            raise Error("Worker fixture failed.")
+            raise Error("LLM fixture failed.")
 
-        reply = self.worker.answer
-        self.worker.answer = fail
+        reply = self.llm.answer
+        self.llm.answer = fail
         save_local_plan(self.source, self.build, self.local_plan)
         self.assert_status(1, "build")
         database = self.build / "compile_commands.json"
         self.assertEqual(len(read_database(database)), 2)
-        self.worker.answer = reply
+        self.llm.answer = reply
         self.assert_status(0, "patch")
         self.assertEqual(len(read_database(database)), 3)
 
@@ -433,9 +445,9 @@ class RefreshTest(unittest.TestCase):
         self.source.mkdir()
         (self.source / "configure").write_text("#!/bin/sh\nexit 1\n")
 
-    def invoke(self, command, get_providers=None):
+    def invoke(self, command, get_llm=None):
         with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
-            status = main([*command, "--build", str(self.build)], get_providers)
+            status = main([*command, "--build", str(self.build)], get_llm)
         self.output = out.getvalue()
         return status, err.getvalue()
 
@@ -451,18 +463,9 @@ class RefreshTest(unittest.TestCase):
         self.log.write_text(f"first run: {configure}{commands}")
         init = ["init", str(self.log), str(self.source)]
         original = RecordedProvider(plan_response(configure_args=["--enable-gold"]))
-        status, error = self.invoke(init, lambda: {"architect": original})
+        status, error = self.invoke(init, lambda: original)
         self.assertEqual(status, 1)
         self.assertIn("2 build steps without matching database outputs", error)
-
-        architect = RecordedProvider(plan_response(
-            configure_args=["--enable-gold"], targets=["all-ld"],
-            quiet_builds={directory: {
-                "compiler": "gcc", "flags": [], "source_prefix": "../../src",
-                "sources": {name: "../../src/shared.c" for name in ("ld_bfd-shared.o", "ld_alt-shared.o")},
-                "flags_by_output": {"ld_bfd-shared.o": ["-DBFD"], "ld_alt-shared.o": ["-DALT"]},
-            }},
-        ))
 
         def recover(context):
             repairs = []
@@ -474,10 +477,17 @@ class RefreshTest(unittest.TestCase):
                 })
             return {"repairs": repairs}
 
-        worker = RecordedProvider(recover)
-        self.assertEqual(self.invoke(init, lambda: {"architect": architect, "worker": worker}), (0, ""))
+        llm = RecordedProvider(analyze=plan_response(
+            configure_args=["--enable-gold"], targets=["all-ld"],
+            quiet_builds={directory: {
+                "compiler": "gcc", "flags": [], "source_prefix": "../../src",
+                "sources": {name: "../../src/shared.c" for name in ("ld_bfd-shared.o", "ld_alt-shared.o")},
+                "flags_by_output": {"ld_bfd-shared.o": ["-DBFD"], "ld_alt-shared.o": ["-DALT"]},
+            }},
+        ), repair=recover)
+        self.assertEqual(self.invoke(init, lambda: llm), (0, ""))
         self.assertEqual(Plan.load(self.build).targets, ["all"])
-        self.assertEqual(architect.calls[0][1]["targets"], ["all"])
+        self.assertEqual(llm.calls[0][1]["targets"], ["all"])
         self.assertEqual(self.invoke(["switch", "ld_alt"]), (0, ""))
 
         def unexpected_provider():
@@ -489,15 +499,16 @@ class RefreshTest(unittest.TestCase):
         self.assertIn("* ld_alt\n", self.output)
 
         self.log.write_text(f"second run: {configure}{commands}")
-        self.assertEqual(self.invoke(init, lambda: {"architect": architect}), (0, ""))
-        self.assertEqual(architect.calls[-1][1]["targets"], ["all"])
+        self.assertEqual(self.invoke(init, lambda: llm), (0, ""))
+        task, context = llm.calls[-1]
+        self.assertEqual((task, context["targets"]), ("analyze", ["all"]))
         self.log.write_text(f"third run: {configure.replace('--enable-gold', '--disable-gold')}{commands}")
         status, error = self.invoke([*init, "--profile", "default"], unexpected_provider)
         self.assertEqual(status, 1)
         self.assertIn("Use --profile with a new name", error)
         self.assertEqual(Plan.load(self.build, "default").log.read_text(), f"second run: {configure}{commands}")
 
-    def test_init_names_new_configurations_from_the_architect(self):
+    def test_init_names_new_configurations_from_the_analysis(self):
         init = ["init", str(self.log), str(self.source)]
         contents = {}
         for triplet, name in (("arm-elf", "arm-elf"), ("aarch64-elf", "aarch64-elf"),
@@ -510,7 +521,7 @@ class RefreshTest(unittest.TestCase):
             provider = RecordedProvider(plan_response(
                 configure_args=[f"--target={triplet}"], profile_name=name.split(".")[0],
             ))
-            self.assertEqual(self.invoke(init, lambda: {"architect": provider}), (0, ""))
+            self.assertEqual(self.invoke(init, lambda: provider), (0, ""))
             self.assertEqual(Plan.load(self.build).profile, name)
             self.assertIn(f"checking target system type... {triplet}",
                           "\n".join(provider.calls[0][1]["build_log_excerpt"]))
@@ -525,7 +536,7 @@ class RefreshTest(unittest.TestCase):
         self.assertEqual(self.invoke(["switch", "--list"]), (0, ""))
         self.assertEqual(self.output, "  aarch64-elf\n  aarch64-elf.2\n* arm-elf\n")
         provider = RecordedProvider(plan_response(profile_name="ignored"))
-        self.assertEqual(self.invoke([*init, "--profile", "manual"], lambda: {"architect": provider}), (0, ""))
+        self.assertEqual(self.invoke([*init, "--profile", "manual"], lambda: provider), (0, ""))
         self.assertEqual(Plan.load(self.build).profile, "manual")
 
     def test_remote_log_parses_without_a_model_or_local_build(self):
@@ -567,7 +578,7 @@ class RefreshTest(unittest.TestCase):
         )
 
         def unexpected_provider():
-            self.fail("Abbreviated status lines cannot be sent to the worker.")
+            self.fail("Abbreviated status lines cannot be sent to the LLM.")
 
         status, error = self.invoke(["refresh", str(self.log)], unexpected_provider)
         self.assertEqual(status, 1)
@@ -578,7 +589,7 @@ class RefreshTest(unittest.TestCase):
         self.assertEqual(entry_location(entry)[1], Path("/remote/build/ld/covered.c"))
         self.assertEqual(self.invoke(["patch"], unexpected_provider)[0], 1)
 
-    def test_quiet_linker_fallback_uses_architect_hints_and_yields_to_the_verbose_log(self):
+    def test_quiet_linker_fallback_uses_analysis_hints_and_yields_to_the_verbose_log(self):
         directory = "/remote/build/ld"
         (self.source / "ld").mkdir()
         (self.source / "ld/ldmain.c").write_text("int main(void) { return 0; }\n")
@@ -612,9 +623,8 @@ class RefreshTest(unittest.TestCase):
                 })
             return {"repairs": result}
 
-        architect, worker = RecordedProvider(annotate), RecordedProvider(repair_log)
-        status, error = self.invoke(["init", str(self.log), str(self.source)],
-                                    lambda: {"architect": architect, "worker": worker})
+        llm = RecordedProvider(analyze=annotate, repair=repair_log)
+        status, error = self.invoke(["init", str(self.log), str(self.source)], lambda: llm)
         self.assertEqual(status, 0, error)
         self.assertIn("Added 2 inferred compilation commands", self.output)
         plan = Plan.load(self.build)
@@ -646,12 +656,6 @@ class RefreshTest(unittest.TestCase):
             "  CC       ld_bfd-shared.o\n"
             "  CC       ld_alt-shared.o\n"
         )
-        architect = RecordedProvider(plan_response(quiet_builds={directory: {
-            "compiler": "gcc", "flags": [], "source_prefix": "../../src",
-            "sources": {name: "../../src/shared.c" for name in ("ld_bfd-shared.o", "ld_alt-shared.o")},
-            "flags_by_output": {"ld_bfd-shared.o": ["-DTARGET=1"], "ld_alt-shared.o": ["-DTARGET=2"]},
-        }}))
-
         def recover(context):
             repairs = []
             for candidate in context["candidates"]:
@@ -662,9 +666,12 @@ class RefreshTest(unittest.TestCase):
                 })
             return {"repairs": repairs}
 
-        worker = RecordedProvider(recover)
-        self.assertEqual(self.invoke(["init", str(self.log), str(self.source)],
-                                     lambda: {"architect": architect, "worker": worker}), (0, ""))
+        llm = RecordedProvider(analyze=plan_response(quiet_builds={directory: {
+            "compiler": "gcc", "flags": [], "source_prefix": "../../src",
+            "sources": {name: "../../src/shared.c" for name in ("ld_bfd-shared.o", "ld_alt-shared.o")},
+            "flags_by_output": {"ld_bfd-shared.o": ["-DTARGET=1"], "ld_alt-shared.o": ["-DTARGET=2"]},
+        }}), repair=recover)
+        self.assertEqual(self.invoke(["init", str(self.log), str(self.source)], lambda: llm), (0, ""))
         self.assertEqual(self.invoke(["switch", "ld_alt"]), (0, ""))
         database = self.build / "compile_commands.json"
         self.assertIn("-DTARGET=2", entry_args(read_database(database)[0]))
@@ -676,16 +683,11 @@ class RefreshTest(unittest.TestCase):
         self.assertEqual(self.invoke(["switch", "--list"]), (0, ""))
         self.assertEqual(self.output, "* default\n")
 
-    def test_init_refreshes_with_its_separate_worker_settings(self):
+    def test_init_analyzes_and_repairs_with_one_llm(self):
         self.log.write_text(
             "gcc -c base.c -o base.o\n"
             "if true; then gcc -c generated.c -o generated.o; fi\n"
         )
-        architect = RecordedProvider(plan_response(
-            configure_args=["--target=arm-elf"],
-            prerequisites=[{"directory": ".", "targets": ["generate"]}],
-            generated_globs=["generated.c"],
-        ))
 
         def repair_log(context):
             candidate, = context["candidates"]
@@ -694,25 +696,23 @@ class RefreshTest(unittest.TestCase):
                 "arguments": ["gcc", "-c", "generated.c", "-o", "generated.o"],
             }]}
 
-        worker = RecordedProvider(repair_log)
+        llm = RecordedProvider(analyze=plan_response(
+            configure_args=["--target=arm-elf"],
+            prerequisites=[{"directory": ".", "targets": ["generate"]}],
+            generated_globs=["generated.c"],
+        ), repair=repair_log)
 
-        def role_settings(role, *, query=False):
-            self.assertEqual(query, role == "architect")
-            return {role: {"architect": architect, "worker": worker}[role]}
-
-        with patch("autobear.cli.providers.settings", side_effect=role_settings) as settings_for:
+        with patch("autobear.cli.providers.settings", return_value=llm) as settings_for:
             status, error = self.invoke([
                 "init", str(self.log), str(self.source), "--log-directory", "/remote/job",
             ])
         self.assertEqual(status, 0, error)
-        self.assertEqual([call.args for call in settings_for.call_args_list],
-                         [("architect",), ("worker",)])
-        self.assertEqual([role for role, _ in architect.calls], ["architect"])
-        self.assertEqual([role for role, _ in worker.calls], ["worker"])
+        self.assertEqual([call.kwargs for call in settings_for.call_args_list], [{"query": True}] * 2)
+        self.assertEqual([task for task, _ in llm.calls], ["analyze", "repair"])
         for message in (
             "This can take a few minutes.", "Make targets all", "Configure options --target=arm-elf",
             "Prerequisite in .", "Generated file patterns generated.c", "Bear produced 1 compilation commands.",
-            "Worker batch 1/1 repaired 1 log commands.", "with 2 compilation commands (2 added).",
+            "Repair batch 1/1 repaired 1 log commands.", "with 2 compilation commands (2 added).",
         ):
             self.assertIn(message, self.output)
         entries = read_database(self.build / "compile_commands.json")
@@ -720,16 +720,8 @@ class RefreshTest(unittest.TestCase):
             Path("/remote/job/base.c"), Path("/remote/job/generated.c"),
         })
 
-    def test_only_worker_repairs_an_imported_log(self):
+    def test_refresh_repairs_an_imported_log_without_new_analysis(self):
         prerequisite = {"directory": ".", "targets": ["generate"]}
-        architect = RecordedProvider(plan_response(prerequisites=[prerequisite], generated_globs=["gen/*.c"]))
-        self.log.write_text("gcc -c base.c -o base.o\n")
-        status, error = self.invoke(
-            ["init", str(self.log), str(self.source), "--log-directory", "/remote/job"],
-            lambda: {"architect": architect},
-        )
-        self.assertEqual(status, 0, error)
-        self.log.write_text("gcc -c `test -f 'gen/a.c' || echo '/source/'`gen/a.c -o a.o\n")
 
         def recover(context):
             self.assertEqual(context["project"]["prerequisites"], [prerequisite])
@@ -740,18 +732,24 @@ class RefreshTest(unittest.TestCase):
                 "arguments": ["gcc", "-c", "gen/a.c", "-o", "a.o"],
             }]}
 
-        worker = RecordedProvider(recover)
+        llm = RecordedProvider(analyze=plan_response(prerequisites=[prerequisite], generated_globs=["gen/*.c"]),
+                               repair=recover)
+        self.log.write_text("gcc -c base.c -o base.o\n")
+        status, error = self.invoke(
+            ["init", str(self.log), str(self.source), "--log-directory", "/remote/job"], lambda: llm,
+        )
+        self.assertEqual(status, 0, error)
+        self.log.write_text("gcc -c `test -f 'gen/a.c' || echo '/source/'`gen/a.c -o a.o\n")
         args = ["refresh", str(self.log), "--log-directory", "/remote/job"]
-        with patch.dict(os.environ, {"AUTOBEAR_ARCHITECT_PROVIDER": "invalid", "OPENROUTER_API_KEY": "",
-                                     "AUTOBEAR_WORKER_PROVIDER": "openrouter"}):
+        with tempfile.TemporaryDirectory() as config_home, \
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": config_home, "OPENROUTER_API_KEY": "",
+                                        "AUTOBEAR_PROVIDER": "openrouter"}):
             status, error = self.invoke(args)
         self.assertEqual(status, 1)
         self.assertIn("OpenRouter needs a model", error)
-        self.assertNotIn("Invalid architect", error)
-        status, error = self.invoke(args, lambda: {"worker": worker})
+        status, error = self.invoke(args, lambda: llm)
         self.assertEqual(status, 0, error)
-        self.assertEqual(len(architect.calls), 1)
-        self.assertEqual([role for role, _ in worker.calls], ["worker"])
+        self.assertEqual([task for task, _ in llm.calls], ["analyze", "repair"])
         entries = read_database(self.build / "compile_commands.json")
         self.assertEqual({entry_location(entry)[1] for entry in entries}, {
             Path("/remote/job/base.c"), Path("/remote/job/gen/a.c"),
@@ -765,7 +763,7 @@ class RefreshTest(unittest.TestCase):
         logs = {}
         for profile, target in profile_targets.items():
             configure_target = f"--target={target}"
-            architect = RecordedProvider(plan_response(
+            provider = RecordedProvider(plan_response(
                 configure_args=[host, configure_target], targets=["all-ld"],
             ))
             self.log.write_text(
@@ -775,19 +773,19 @@ class RefreshTest(unittest.TestCase):
             )
             status, error = self.invoke(
                 ["init", str(self.log), str(self.source), "--profile", profile],
-                lambda: {"architect": architect},
+                lambda: provider,
             )
             self.assertEqual(status, 0, error)
             database = self.build / "compile_commands.json"
             databases[profile] = database.read_bytes()
             logs[profile] = self.log.read_bytes()
             self.assertEqual(len(read_database(database)), 1)
-            self.assertEqual(len(architect.calls), 1)
+            self.assertEqual(len(provider.calls), 1)
         first, second = profile_targets
         self.assertNotEqual(databases[first], databases[second])
 
         def unexpected_provider():
-            self.fail("Switching profiles requires neither model.")
+            self.fail("Switching profiles requires no LLM.")
 
         status, error = self.invoke(["switch", first], unexpected_provider)
         self.assertEqual(status, 0, error)
@@ -815,9 +813,9 @@ class RefreshTest(unittest.TestCase):
             "gcc -MD -MF first.d -MT first.o -c other.c -o first.o\n"
             "gcc -MD -MF second.d -MT second.o -c other.c -o second.o\n"
         )
-        architect = RecordedProvider(plan_response())
+        provider = RecordedProvider(plan_response())
         init = ["init", str(self.log), str(self.source)]
-        self.assertEqual(self.invoke(init, lambda: {"architect": architect}), (0, ""))
+        self.assertEqual(self.invoke(init, lambda: provider), (0, ""))
         self.assertEqual(self.invoke(["switch", "--list"]), (0, ""))
         self.assertEqual([line.split()[1 if line.startswith("*") else 0] for line in self.output.splitlines()],
                          ["default", "ld_alt", "ld_bfd"])

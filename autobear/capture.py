@@ -496,21 +496,21 @@ def repair_batch(plan, bear, batch, provider):
             "prerequisites": plan.prerequisites,
             "generated_globs": plan.generated_globs,
         }
-    response = provider.request("worker", context)
+    response = provider.request("repair", context)
     fields(response, "repairs")
     if not isinstance(response["repairs"], list):
-        raise Error("Expected an array of worker repairs.")
+        raise Error("Expected an array of repairs.")
     by_lines = {item.lines: item for item in batch}
     repaired = {}
     for repair in response["repairs"]:
         fields(repair, "lines directory arguments")
         lines = repair["lines"]
         if not isinstance(lines, list) or any(type(n) is not int for n in lines):
-            raise Error("Worker repair needs an array of log line numbers.")
+            raise Error("A repair needs an array of log line numbers.")
         candidate = by_lines.get(tuple(lines))
         args = strings(repair["arguments"], "repair arguments", allow_empty=True)
         if not candidate or repair["directory"] != str(candidate.directory) or not args or not args[0]:
-            raise Error("Worker repair does not match the log line numbers and working directory.")
+            raise Error("A repair does not match the log line numbers and working directory.")
         if candidate in hints:
             hint = hints[candidate]
             if not hint or not matches_quiet_hint(candidate, args, hint):
@@ -570,7 +570,7 @@ def report_abbreviated(plan, abbreviated, entries):
     return True
 
 
-def repair_quiet(plan, bear, get_providers, entries, abbreviated):
+def repair_quiet(plan, bear, get_llm, entries, abbreviated):
     seen = set()
     candidates = []
     for item in missing_abbreviated(abbreviated, entries):
@@ -579,8 +579,8 @@ def repair_quiet(plan, bear, get_providers, entries, abbreviated):
             seen.add(key)
             candidates.append(item)
     if candidates:
-        print(f"Using architect annotations for {len(candidates)} abbreviated compile steps.", flush=True)
-        repair(plan, bear, get_providers, entries, candidates)
+        print(f"Using the saved build analysis for {len(candidates)} abbreviated compile steps.", flush=True)
+        repair(plan, bear, get_llm, entries, candidates)
     return report_abbreviated(plan, abbreviated, entries)
 
 
@@ -610,7 +610,7 @@ def save_repairs(plan, records):
     ])
 
 
-def refresh_database(plan, bear, get_providers):
+def refresh_database(plan, bear, get_llm):
     print(f"Scanning the saved log for compiler commands in profile {plan.profile}.", flush=True)
     with report_wait("Build log scan"):
         candidates, abbreviated = scan_log(plan)
@@ -630,8 +630,8 @@ def refresh_database(plan, bear, get_providers):
     print("Checking which log commands still need repair.", flush=True)
     with report_wait("Log coverage check"):
         missing = candidates_missing(plan, bear, entries, candidates, parsed)
-    unresolved = repair(plan, bear, get_providers, entries, missing)
-    abbreviated_missing = repair_quiet(plan, bear, get_providers, entries, abbreviated)
+    unresolved = repair(plan, bear, get_llm, entries, missing)
+    abbreviated_missing = repair_quiet(plan, bear, get_llm, entries, abbreviated)
     if entries:
         print(f"Saved {plan.public_database} with {len(entries)} compilation commands "
               f"({len(entries) - previous_count} added).", flush=True)
@@ -640,7 +640,7 @@ def refresh_database(plan, bear, get_providers):
     return int(unresolved or abbreviated_missing or not entries)
 
 
-def patch(plan, bear, get_providers):
+def patch(plan, bear, get_llm):
     if not plan.log.is_file():
         raise Error(f"No build log exists at {plan.log}. Run autobear build first.")
     entries = read_database(plan.database)
@@ -648,16 +648,16 @@ def patch(plan, bear, get_providers):
     with report_wait("Log coverage check"):
         candidates, abbreviated = scan_log(plan)
         missing = candidates_missing(plan, bear, entries, candidates)
-    unresolved = repair(plan, bear, get_providers, entries, missing)
-    return repair_quiet(plan, bear, get_providers, entries, abbreviated) or unresolved
+    unresolved = repair(plan, bear, get_llm, entries, missing)
+    return repair_quiet(plan, bear, get_llm, entries, abbreviated) or unresolved
 
 
-def repair(plan, bear, get_providers, entries, missing):
+def repair(plan, bear, get_llm, entries, missing):
     if not missing:
         print("No visible compiler commands need repair.")
         return 0
     try:
-        provider = get_providers()["worker"]
+        provider = get_llm()
         problem = provider.unavailable()
         if problem:
             raise Error(problem)
@@ -666,14 +666,14 @@ def repair(plan, bear, get_providers, entries, missing):
     else:
         batch_size = 20
         batch_count = (len(missing) + batch_size - 1) // batch_size
-        print(f"Worker provider {provider.name} ({provider.model or 'default model'}). "
+        print(f"LLM {provider.name} ({provider.model or 'default model'}). "
               f"Checking {len(missing)} unresolved log commands in {batch_count} batches. "
               "Each batch can take a few minutes.", flush=True)
         repaired = {}
         records = load_repairs(plan)
         for number, offset in enumerate(range(0, len(missing), batch_size), 1):
             batch = missing[offset:offset + batch_size]
-            stage = f"Worker batch {number}/{batch_count}"
+            stage = f"Repair batch {number}/{batch_count}"
             print(f"{stage} started with {len(batch)} log commands.", flush=True)
             try:
                 with report_wait(stage):
@@ -697,6 +697,6 @@ def repair(plan, bear, get_providers, entries, missing):
             write_json(plan.database, entries)
             save_repairs(plan, records)
         missing = [candidate for candidate in missing if candidate not in repaired]
-        print(f"Worker repaired {len(repaired)} log commands. {len(missing)} remain unresolved.", flush=True)
+        print(f"Repaired {len(repaired)} log commands. {len(missing)} remain unresolved.", flush=True)
     report_unresolved(plan, missing)
     return bool(missing)

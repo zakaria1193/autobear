@@ -2,7 +2,7 @@
 
 Autobear creates a clangd `compile_commands.json` from the build log of a GNU autotools/autoconf project such as binutils, GCC, GDB, or glibc. Autobear never reruns the build, so the build can run on CI, on another machine, or in a container.
 
-Autobear passes the log to Bear's shell parser. A strong LLM reads the log and source tree once to understand the build. A smaller LLM then repairs the commands that Bear cannot parse.
+Autobear passes the log to Bear's shell parser. An LLM reads the log and source tree once to understand the build, and then repairs the commands that Bear cannot parse.
 
 | | Bear alone | autobear |
 |---|---|---|
@@ -32,34 +32,35 @@ python3 -m venv .venv
 python -m pip install .
 ```
 
-## Configure the providers
+## Configure the LLM
+
+Autobear uses one LLM. Choose the strongest model you have, such as Claude Opus. Autobear calls it only when you import or repair a log, so a strong model adds little cost.
 
 Codex is the only provider tested manually. The automated provider tests use recorded responses.
 
-In a terminal, `init` asks for both providers and their models when the TOML file is absent. It saves the choices in `~/.config/autobear/config.toml` or under `XDG_CONFIG_HOME`. CLI providers must be on `PATH` to appear in the menu. Autobear queries the Codex and OpenRouter model catalogs during setup. Choose a model by number or enter its ID if the catalog is unavailable.
+In a terminal, `init` asks for the provider and model when the TOML file is absent. It saves the choice in `~/.config/autobear/config.toml` or under `XDG_CONFIG_HOME`. CLI providers must be on `PATH` to appear in the menu. Autobear queries the Codex and OpenRouter model catalogs during setup. Choose a model by number or enter its ID if the catalog is unavailable.
 
-For noninteractive runs, set the providers in the TOML file or in the environment. The default architect is `codex-cli`. The default worker is `openrouter`.
+For noninteractive runs, set the LLM in the TOML file or in the environment. Without a setting, autobear uses `codex-cli` with its default model.
 
 ```toml
-[architect]
-provider = "codex-cli"
-
-[worker]
+[llm]
 provider = "claude-cli"
-model = "sonnet"
+model = "opus"
 ```
 
 The available providers are `claude-cli`, `codex-cli`, `agy-cli`, and `openrouter`. Authenticate each CLI before use. The Antigravity CLI needs support for `--print`, `--output-format json`, and `--sandbox`.
 
-For OpenRouter, set `model` to a model that supports JSON mode. Export `OPENROUTER_API_KEY` in the environment. If the worker is unavailable, autobear preserves the database entries that Bear found and reports the unresolved lines.
+For OpenRouter, set `model` to a model that supports JSON mode. Export `OPENROUTER_API_KEY` in the environment. If the LLM is unavailable, autobear preserves the database entries that Bear found and reports the unresolved lines.
 
-To override the file, set `AUTOBEAR_ARCHITECT_PROVIDER`, `AUTOBEAR_ARCHITECT_MODEL`, `AUTOBEAR_WORKER_PROVIDER`, or `AUTOBEAR_WORKER_MODEL`.
+To override the file, set `AUTOBEAR_PROVIDER` or `AUTOBEAR_MODEL`.
+
+A configuration file from an earlier version has `[architect]` and `[worker]` tables. Replace them with one `[llm]` table.
 
 ## Create and switch build profiles
 
 A build profile keeps the compilation commands for one build configuration together. For example, one binutils profile can cover `ld.bfd`, `ld.gold`, and `as`. Use separate profiles to switch between different configurations, such as native and cross builds.
 
-Use `init` the first time you import a build configuration, including after you change the configure target. The architect names the profile from the log and source evidence. It prefers the configured target for toolchains and the configured host for other Autoconf projects. An import with insufficient evidence can use `default`. Use `--profile NAME` to choose the name yourself.
+Use `init` the first time you import a build configuration, including after you change the configure target. The LLM names the profile from the log and source evidence. It prefers the configured target for toolchains and the configured host for other Autoconf projects. An import with insufficient evidence can use `default`. Use `--profile NAME` to choose the name yourself.
 
 ```sh
 autobear init ../arm-elf.log .
@@ -82,9 +83,9 @@ Each build profile keeps its own plan, log, and database. If targets compile the
 
 A verbose log shows compiler command lines and working directories. For GNU make, `LC_ALL=C make --print-directory --output-sync=recurse V=1` produces this format. For a quiet log, `init` uses the source tree to help recover missing commands before it looks for target variants.
 
-Autobear uses Bear to read the log and sends unresolved commands to the worker.
+Autobear uses Bear to read the log and sends unresolved commands to the LLM.
 
-If `refresh` cannot recover commands from a quiet log, rerun `init` with the matching source tree and the same profile. The architect reads the build rules and records compiler flags, source mappings, and generated files. The worker uses those annotations for steps without full commands. Autobear reports inferred entries and records them in the profile's `repairs.json`. A full command from a later log replaces the inferred command for that output.
+If `refresh` cannot recover commands from a quiet log, rerun `init` with the matching source tree and the same profile. The LLM reads the build rules and records compiler flags, source mappings, and generated files. Later repairs use those annotations for steps without full commands. Autobear reports inferred entries and records them in the profile's `repairs.json`. A full command from a later log replaces the inferred command for that output.
 
 Autobear writes each command with the build machine's paths. Clangd needs the sources, headers, and generated files at those paths to use the database.
 
