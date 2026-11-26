@@ -244,7 +244,7 @@ def choose_model(label, provider, required, catalogs):
 def choose_provider(installed, catalogs):
     label = "LLM"
     provider_env = "AUTOCOMPDB_PROVIDER"
-    name = os.getenv(provider_env, os.getenv("AUTOBEAR_PROVIDER"))
+    name = os.getenv(provider_env)
     if name is None:
         ready = [*installed]
         if os.getenv("OPENROUTER_API_KEY"):
@@ -271,7 +271,7 @@ def choose_provider(installed, catalogs):
         raise Error(f"Invalid provider in {provider_env}.")
 
     model_env = "AUTOCOMPDB_MODEL"
-    model = os.getenv(model_env, os.getenv("AUTOBEAR_MODEL"))
+    model = os.getenv(model_env)
     required = name == "openrouter"
     if model is None:
         model = choose_model(label, name, required, catalogs)
@@ -306,9 +306,6 @@ def setup_provider(path):
 def settings(*, query=False):
     config_home = Path(os.getenv("XDG_CONFIG_HOME") or Path.home() / ".config")
     path = config_home / "autocompdb" / "config.toml"
-    legacy_path = config_home / "autobear" / "config.toml"
-    if not path.exists() and legacy_path.is_file():
-        path = legacy_path
     if query and not path.exists() and sys.stdin.isatty():
         setup_provider(path)
     if path.exists():
@@ -321,8 +318,8 @@ def settings(*, query=False):
     table = data.get("llm", {})
     if not isinstance(table, dict):
         raise Error(f"Expected an [llm] table in {path}.")
-    name = os.getenv("AUTOCOMPDB_PROVIDER", os.getenv("AUTOBEAR_PROVIDER", table.get("provider", DEFAULT_PROVIDER)))
-    model = os.getenv("AUTOCOMPDB_MODEL", os.getenv("AUTOBEAR_MODEL", table.get("model", "")))
+    name = os.getenv("AUTOCOMPDB_PROVIDER", table.get("provider", DEFAULT_PROVIDER))
+    model = os.getenv("AUTOCOMPDB_MODEL", table.get("model", ""))
     if not isinstance(name, str) or name not in (*CLI, "openrouter") or not isinstance(model, str):
         raise Error(f"Invalid LLM provider or model in {path} or the environment.")
     return Provider(name, model)

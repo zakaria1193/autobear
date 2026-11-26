@@ -415,7 +415,7 @@ class BuildTest(unittest.TestCase):
     def test_failed_build_preserves_log(self):
         save_local_plan(self.source, self.build, plan_response(targets=["fail"]))
         output = self.assert_status(1, "build")
-        path = self.build / ".autobear" / "build.log"
+        path = self.build / ".autocompdb" / "build.log"
         self.assertIn(str(path), output)
         self.assertIn("false", path.read_text())
 
@@ -447,7 +447,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(len(read_database(database)), 1)
         self.assert_status(0, "verify")
         database.resolve().unlink()
-        (self.build / ".autobear" / "build.log").unlink()
+        (self.build / ".autocompdb" / "build.log").unlink()
         output = self.assert_status(0, "build")
         self.assertIn("use a fresh build directory", output)
         self.assertEqual(read_database(database), [])
@@ -526,36 +526,53 @@ class RefreshTest(unittest.TestCase):
         self.assertIn("Use --profile with a new name", error)
         self.assertEqual(Plan.load(self.build, "default").log.read_text(), f"second run: {configure}{commands}")
 
-    def test_init_names_new_configurations_from_the_analysis(self):
+    def test_init_names_new_configurations_from_the_log_triplet(self):
         init = ["init", str(self.log), str(self.source)]
         contents = {}
-        for triplet, name in (("arm-elf", "arm-elf"), ("aarch64-elf", "aarch64-elf"),
-                              ("riscv64-elf", "aarch64-elf.2")):
-            log = (f"./configure --target={triplet}\n" + "noise\n" * 20
+        for triplet, option, name in (
+            ("arm-unknown-elf", "", "arm-unknown-elf"),
+            ("aarch64-unknown-elf", "", "aarch64-unknown-elf"),
+            ("aarch64-unknown-elf", " --enable-test", "aarch64-unknown-elf.2"),
+        ):
+            log = (f"./configure --target={triplet}{option}\n" + "noise\n" * 20
+                   + "checking build system type... x86_64-pc-linux-gnu\n"
+                   + "checking host system type... x86_64-pc-linux-gnu\n"
                    + f"checking target system type... {triplet}\n"
-                   + f"gcc -DTRIPLET={triplet} -c main.c -o main.o\n" + "noise\n" * 20)
+                   + f"gcc -DPROFILE={name} -c main.c -o main.o\n" + "noise\n" * 20)
             self.log.write_text(log)
             contents[name] = log
             provider = RecordedProvider(plan_response(
-                configure_args=[f"--target={triplet}"], profile_name=name.split(".")[0],
+                configure_args=[f"--target={triplet}", *option.split()], profile_name="riscv64-unknown-elf",
             ))
             self.assertEqual(self.invoke(init, lambda: provider), (0, ""))
             self.assertEqual(Plan.load(self.build).profile, name)
             self.assertIn(f"checking target system type... {triplet}",
                           "\n".join(provider.calls[0][1]["build_log_excerpt"]))
 
-        self.log.write_text(contents["arm-elf"])
+        self.log.write_text(contents["arm-unknown-elf"])
 
         def unexpected_provider():
             self.fail("An identical log should reuse its profile.")
 
         self.assertEqual(self.invoke(init, unexpected_provider), (0, ""))
-        self.assertEqual(Plan.load(self.build).profile, "arm-elf")
+        self.assertEqual(Plan.load(self.build).profile, "arm-unknown-elf")
         self.assertEqual(self.invoke(["switch", "--list"]), (0, ""))
-        self.assertEqual(self.output, "  aarch64-elf\n  aarch64-elf.2\n* arm-elf\n")
+        self.assertEqual(self.output, "  aarch64-unknown-elf\n  aarch64-unknown-elf.2\n* arm-unknown-elf\n")
         provider = RecordedProvider(plan_response(profile_name="ignored"))
         self.assertEqual(self.invoke([*init, "--profile", "manual"], lambda: provider), (0, ""))
         self.assertEqual(Plan.load(self.build).profile, "manual")
+
+    def test_init_uses_the_model_triplet_when_the_log_has_no_system_type(self):
+        self.log.write_text("gcc -c main.c -o main.o\n")
+        provider = RecordedProvider(plan_response(profile_name="riscv64-unknown-elf"))
+        self.assertEqual(self.invoke(["init", str(self.log), str(self.source)], lambda: provider), (0, ""))
+        self.assertEqual(Plan.load(self.build).profile, "riscv64-unknown-elf")
+
+    def test_first_refresh_uses_the_logged_host_triplet(self):
+        self.log.write_text("checking host system type... aarch64-unknown-linux-gnu\n"
+                            "gcc -c main.c -o main.o\n")
+        self.assertEqual(self.invoke(["refresh", str(self.log)]), (0, ""))
+        self.assertEqual(Plan.load(self.build).state, self.build / ".autocompdb/profiles/aarch64-unknown-linux-gnu")
 
     def test_remote_log_parses_without_a_model_or_local_build(self):
         self.log.write_text(

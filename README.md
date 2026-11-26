@@ -42,18 +42,18 @@ A configuration file from an earlier version has `[architect]` and `[worker]` ta
 
 A build profile keeps the compilation commands for one build configuration together. For example, one binutils profile can cover `ld.bfd`, `ld.gold`, and `as`. Use separate profiles to switch between different configurations, such as native and cross builds.
 
-Use `init` the first time you import a build configuration, including after you change the configure target. The LLM names the profile from the log and source evidence. It prefers the configured target for toolchains and the configured host for other Autoconf projects. An import with insufficient evidence can use `default`. Use `--profile NAME` to choose the name yourself.
+Use `init` the first time you import a build configuration, including after you change the configure target. Autocompdb uses the GNU system triplet from the log. It checks the target, then the host, then the build system. When GNU `config.sub` is available, Autocompdb uses it to expand aliases such as `arm-elf`. If the log does not identify a triplet, Autocompdb uses the LLM analysis. If the analysis cannot identify a triplet, the profile is named `default`. Use `--profile NAME` to choose a name.
 
 ```sh
 autocompdb init ../arm-elf.log .
 ```
 
-Run the example from the binutils source checkout. If the log identifies the ARM ELF target, `init` can name the profile `arm-elf` and activate it. If you need to specify a Make target such as `all-ld`, pass `--target all-ld` to autocompdb.
+Run the example from the binutils source checkout. If the log identifies the ARM ELF target, `init` can name the profile `arm-unknown-elf` and activate it. If you need to specify a Make target such as `all-ld`, pass `--target all-ld` to autocompdb.
 
 Use `refresh` to import a later log for the same configuration, including a rebuild that compiles a new source file. Select the matching profile first if another profile is active.
 
 ```sh
-autocompdb switch arm-elf
+autocompdb switch arm-unknown-elf
 autocompdb refresh ../arm-elf.log
 ```
 

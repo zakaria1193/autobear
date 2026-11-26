@@ -15,10 +15,10 @@ from .capture import (
 )
 from .state import Error, write_text
 
-BEGIN = "# BEGIN autobear"
-END = "# END autobear"
-MANAGED = re.compile(r"^# BEGIN autobear\n---\nCompileFlags:\n  CompilationDatabase: "
-                     r"[^\n]+\n# END autobear\n?", re.MULTILINE)
+BEGIN = "# BEGIN autocompdb"
+END = "# END autocompdb"
+MANAGED = re.compile(rf"^{BEGIN}\n---\nCompileFlags:\n  CompilationDatabase: "
+                     rf"[^\n]+\n{END}\n?", re.MULTILINE)
 CDB = re.compile(r"Compile command from CDB is: \[(.*)\] (.*)$", re.MULTILINE)
 
 

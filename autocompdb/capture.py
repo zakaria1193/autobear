@@ -1,5 +1,3 @@
-import contextlib
-import fcntl
 import os
 import re
 import shlex
@@ -15,7 +13,7 @@ from .state import Error, fields, read_json, strings, write_json
 
 SOURCE_SUFFIXES = {".c", ".C", ".cc", ".cp", ".cpp", ".cxx", ".c++", ".C++", ".m", ".mm", ".i", ".ii"}
 DIRECTORY = re.compile(r"^make(?:\[\d+\])?: (Entering|Leaving) directory [`'](.*)'$")
-STAGE = "autobear directory "
+STAGE = "autocompdb directory "
 ABBREVIATED_COMPILE = re.compile(r"^[ \t]+(?:CC|CXX)[ \t]{2,}(.+\.(?:o|lo|obj))[ \t]*$")
 LIBTOOL = re.compile(r"^libtool: compile:\s*")
 LIBTOOL_WRAPPER = re.compile(r"(?:^|\s)\S*[/]libtool\s.*--mode=compile(?:\s|$)")
@@ -47,14 +45,6 @@ OPTION_WITH_VALUE = {
 LITERAL_WORD = re.compile(
     r"""(?:\\[^\n]|'[^']*'|"(?:\\["\\]|[^"\\$\x60])*"|[^ \t\r\n'"\\$\x60;&|<>()*?\[{}~])+"""
 )
-
-
-@contextlib.contextmanager
-def lock(state):
-    state.mkdir(parents=True, exist_ok=True)
-    with (state / "lock").open("a") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        yield
 
 
 def absolute(directory, value):

@@ -13,15 +13,15 @@ from pathlib import Path
 
 from . import providers
 from .capture import (
-    capture, lock, missing_abbreviated, patch, quiet_evidence, quiet_hint,
+    capture, missing_abbreviated, patch, quiet_evidence, quiet_hint,
     read_database, refresh_database, scan_log,
 )
 from .clangd import configure_clangd, verify
 from .progress import report_wait
 from .selection import fzf_choice
 from .state import (
-    DATABASE_NAME, Error, Plan, activate_profile, active_profile, logged_configuration, profile_names,
-    profile_state, project_context, targets,
+    DATABASE_NAME, DEFAULT_PROFILE, Error, Plan, activate_profile, active_profile, build_lock,
+    canonical_triplet, logged_configuration, profile_names, profile_state, profile_triplet, project_context, targets,
 )
 from .variants import saved_variants, update_variants
 
@@ -54,7 +54,7 @@ def arguments(argv):
                              help="Directory for the database and plan. Defaults to the current directory.")
     init.add_argument("log", type=Path, help="Representative log from the build to analyze.")
     init.add_argument("source", type=Path, help="Source directory.")
-    init.add_argument("--profile", help="Profile name. Omit to let the LLM infer a name.")
+    init.add_argument("--profile", help="Profile name. Defaults to the GNU system triplet when available.")
     init.add_argument("--target", action="append", default=[], help="Make target. Repeat for more targets.")
     build.add_argument("--jobs", type=positive, help="Number of parallel make jobs.")
     check.add_argument("--sample-size", type=positive, default=2, help="Maximum sample size per file group.")
@@ -98,8 +98,7 @@ def find_import(plans, matches, active):
     return compatible[0] if len(compatible) == 1 else None
 
 
-def choose_import_profile(plan, suggestion, fallback, plans, matches, variants):
-    base = suggestion or fallback
+def choose_import_profile(plan, base, plans, matches, variants):
     profile_state(plan.build, base)
     for index in count(1):
         name = base if index == 1 else f"{base}.{index}"
@@ -132,7 +131,7 @@ def init(args, build, get_llm):
     active = variants.get(selected, selected)
     names = [name for name in profile_names(build) if args.profile is None or name == args.profile]
     plans = {name: Plan.load(build, name) for name in names}
-    configuration = logged_configuration(log) if plans else (None, {})
+    configuration = logged_configuration(log)
     matches = {name: import_match(plan, source, args.target, log, configuration) for name, plan in plans.items()}
     existing = plans.get(args.profile) if args.profile is not None else find_import(plans, matches, active)
     name = args.profile or (existing.profile if existing else None)
@@ -170,12 +169,14 @@ def init(args, build, get_llm):
     if not isinstance(response, dict):
         raise Error("Expected an object for the analysis response.")
     response = dict(response)
-    suggestion = response.pop("profile_name", "")
+    suggestion = response.pop("profile_name", None)
     plan = Plan.validate(source, build, response, selected_targets)
     if name is None:
-        if not isinstance(suggestion, str):
-            raise Error("Expected a string for the suggested profile name.")
-        name = choose_import_profile(plan, suggestion, active, plans, matches, variants)
+        base = (profile_triplet(source, *configuration)
+                or profile_triplet(source, plan.configure_args, {})
+                or canonical_triplet(source, suggestion)
+                or DEFAULT_PROFILE)
+        name = choose_import_profile(plan, base, plans, matches, variants)
         existing = plans.get(name)
         if matches.get(name, (False, None))[1]:
             plan.targets = existing.targets
@@ -207,16 +208,22 @@ def init(args, build, get_llm):
 def refresh(args, build, get_llm):
     path = log_path(args)
     selected = active_profile(build)
-    name = saved_variants(build).get(selected, selected)
+    variants = saved_variants(build)
+    name = variants.get(selected, selected)
+    if name == DEFAULT_PROFILE and not (profile_state(build, name) / "plan.json").is_file():
+        triplet = profile_triplet(build, *logged_configuration(path))
+        if triplet and triplet not in variants:
+            name = triplet
     if (profile_state(build, name) / "plan.json").is_file():
         plan = Plan.load(build, name)
     else:
-        plan = Plan(build, build, [], [], ["all"], [], analyzed=False)
+        plan = Plan(build, build, [], [], ["all"], [], profile=name, analyzed=False)
     return refresh_profile(plan, path, args.log_directory, get_llm, selected)
 
 
 def refresh_profile(plan, path, log_directory, get_llm, selected):
     plan.log_directory = log_directory or plan.log_directory or plan.build
+    plan.state.mkdir(parents=True, exist_ok=True)
     if path != plan.log.resolve():
         print(f"Saving a copy of the build log to {plan.log}.", flush=True)
         with tempfile.NamedTemporaryFile(dir=plan.state, delete=False) as stream:
@@ -299,8 +306,7 @@ def main(argv=None, get_llm=None):
 
     build = args.build.resolve()
     try:
-        state = build / ".autobear"
-        with lock(state):
+        with build_lock(build):
             if args.action == "switch":
                 return switch_profile(args, build)
             if args.action == "init":

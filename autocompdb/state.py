@@ -1,11 +1,14 @@
+import fcntl
 import json
 import os
 import re
 import shlex
 import shutil
 import stat
+import subprocess
 import tempfile
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -61,12 +64,22 @@ def targets(value):
 
 DEFAULT_PROFILE = "default"
 DATABASE_NAME = "compile_commands.json"
+STATE_DIRECTORY = ".autocompdb"
+
+
+@contextmanager
+def build_lock(build):
+    state = build / STATE_DIRECTORY
+    state.mkdir(parents=True, exist_ok=True)
+    with (state / "lock").open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
 
 
 def profile_state(build, name):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
         raise Error("Use letters, digits, dots, underscores, or hyphens in a profile name.")
-    root = build / ".autobear"
+    root = build / STATE_DIRECTORY
     return root if name == DEFAULT_PROFILE else root / "profiles" / name
 
 
@@ -74,7 +87,7 @@ def active_profile(build):
     public = build / DATABASE_NAME
     if public.is_symlink():
         target = Path(os.path.normpath(build / os.readlink(public)))
-        parent = build / ".autobear" / "profiles"
+        parent = build / STATE_DIRECTORY / "profiles"
         if target.name == DATABASE_NAME and target.parent.parent == parent:
             return target.parent.name
     return DEFAULT_PROFILE
@@ -232,6 +245,40 @@ class Plan:
 
 
 SYSTEM_TYPE = re.compile(r"^\s*checking (build|host|target) system type\.\.\. (?:\(cached\) )?([\w.+-]+)\s*$")
+SYSTEM_OPTION = re.compile(r"--(build|host|target)(?:=(.*))?")
+SYSTEM_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*")
+GNU_TRIPLET = re.compile(r"[A-Za-z0-9_]+-[A-Za-z0-9_.+]+-[A-Za-z0-9_.+-]+")
+
+
+def canonical_triplet(source, value):
+    if not isinstance(value, str) or not SYSTEM_ALIAS.fullmatch(value):
+        return None
+    scripts = [source / "config.sub", source / "build-aux" / "config.sub", Path("/usr/share/misc/config.sub")]
+    if installed := shutil.which("config.sub"):
+        scripts.append(Path(installed))
+    if script := next((path for path in scripts if path.is_file()), None):
+        try:
+            result = subprocess.run(["/bin/sh", str(script), value], cwd=source,
+                                    capture_output=True, text=True, check=True, timeout=5)
+            triplet = result.stdout.strip()
+            if GNU_TRIPLET.fullmatch(triplet):
+                return triplet
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    return value if GNU_TRIPLET.fullmatch(value) else None
+
+
+def profile_triplet(source, args, systems):
+    aliases = {}
+    arguments = iter(args or ())
+    for arg in arguments:
+        if match := SYSTEM_OPTION.fullmatch(arg):
+            kind, value = match.groups()
+            aliases[kind] = value if value is not None else next(arguments, "")
+    for kind in ("target", "host", "build"):
+        if triplet := canonical_triplet(source, systems.get(kind) or aliases.get(kind)):
+            return triplet
+    return None
 
 
 def logged_configuration(path):
