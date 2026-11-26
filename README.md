@@ -1,6 +1,17 @@
 # autobear
 
-Autobear creates a clangd compilation database from a build log. During `init`, a strong LLM model reads source and log excerpts to identify targets, configuration, and prerequisites. Autobear then refreshes the database with Bear. A smaller LLM model handles only the compiler commands Bear leaves unresolved. The build can run on another machine or in CI.
+Autobear creates a clangd `compile_commands.json` from the build log of a GNU autotools/autoconf project such as binutils, GCC, GDB, or glibc. Autobear never reruns the build, so the build can run on CI, on another machine, or in a container.
+
+Autobear passes the log to Bear's shell parser. A strong LLM reads the log and source tree once to understand the build. A smaller LLM then repairs the commands that Bear cannot parse.
+
+| | Bear alone | autobear |
+|---|---|---|
+| The tree is already built | `bear -- make` records nothing | Reads the existing log |
+| The build ran on CI | Rerun it locally under Bear | Import the log, and remap paths with `--log-directory` |
+| A quiet log prints `CC foo.o` | No entry | Infers the command from the Makefiles |
+| A compile is wrapped by libtool or automake | Often unresolved | Unwraps it or repairs it |
+| You have native and cross builds of one tree | One database | Separate profiles, selected with `autobear switch` |
+| `ld.bfd` and `ld.gold` compile the same source | clangd uses the first entry | One clangd view for each target |
 
 ## Install
 
